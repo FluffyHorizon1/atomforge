@@ -1,0 +1,14 @@
+/usr/local/lib/python3.13/site-packages/pyscf/pbc/gto/cell.py:1407: UserWarning: Electron number 3 and spin 0 are not consistent in cell
+
+  warnings.warn('Electron number %d and spin %d are not consistent '
+k=2 basis=gth-szv nao=4 mesh=[23 23 23] nk=8
+  E=-2.075880 Ha conv=True scf=7.4s maxrss=0.16GB
+  grad=11.1s  |g|=2.12e-15
+  stress=6.2s  diag=[-0.00007 -0.00007 -0.00007]
+/usr/local/lib/python3.13/site-packages/pyscf/pbc/gto/cell.py:1407: UserWarning: Electron number 3 and spin 0 are not consistent in cell
+
+  warnings.warn('Electron number %d and spin %d are not consistent '
+k=3 basis=gth-szv nao=4 mesh=[23 23 23] nk=27
+  E=-2.011505 Ha conv=True scf=13.6s maxrss=0.24GB
+  grad=33.5s  |g|=5.17e-16
+  stress=13.3s  diag=[-0.000522 -0.000522 -0.000522]

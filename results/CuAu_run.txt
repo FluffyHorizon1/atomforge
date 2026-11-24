@@ -1,0 +1,67 @@
+[1/6] elemental references
+[2/6] ordered prototypes
+[3/6] random solid solutions
+[4/6] Monte Carlo chemical-ordering search.....................
+[5/6] convex hull
+[6/6] stability screen (elastic + MD at 600 K)
+   screening MC-hcp Cu7Au
+   screening L1_2 Cu3Au
+   screening MC-hcp Cu2Au
+   screening MC-fcc CuAu
+   screening MC-fcc CuAu2
+   screening L1_2 CuAu3
+   screening MC-fcc CuAu7
+
+Cu-Au  (Zhou04-EAM)   refs: Cu A1 (fcc) (-3.5400 eV), Au A1 (fcc) (-3.9300 eV)
+  id  structure                          source             x_B  Ef meV/at      Ehull
+  66  MC-hcp Cu7Au                       mc-ordering      0.125      -48.5        0.0 <- hull
+  59  MC-bcc Cu7Au                       mc-ordering      0.125      -46.6        1.9 
+  52  MC-fcc Cu7Au                       mc-ordering      0.125      -46.3        2.2 
+   6  L1_2 Cu3Au                         prototype        0.250      -93.3        0.0 <- hull
+  53  MC-fcc Cu3Au                       mc-ordering      0.250      -92.7        0.6 
+  60  MC-bcc Cu3Au                       mc-ordering      0.250      -92.7        0.6 
+  67  MC-hcp Cu3Au                       mc-ordering      0.250      -91.0        2.2 
+  11  D0_3 Cu3Au                         prototype        0.250      -82.3       11.0 
+  19  SS-fcc (avg of 3) Cu3Au            solid-solution   0.250      -74.8       18.4 
+  43  SS-hcp (avg of 3) Cu3Au            solid-solution   0.250      -74.3       19.0 
+  31  SS-bcc (avg of 3) Cu3Au            solid-solution   0.250      -73.4       19.9 
+  68  MC-hcp Cu2Au                       mc-ordering      0.333     -108.6        0.0 <- hull
+  54  MC-fcc Cu2Au                       mc-ordering      0.333     -106.9        1.7 
+  61  MC-bcc Cu2Au                       mc-ordering      0.333     -103.9        4.7 
+  14  C15 Cu2Au                          prototype        0.333      -43.7       64.9 
+  55  MC-fcc CuAu                        mc-ordering      0.500     -133.1        0.0 <- hull
+   8  L1_0 CuAu                          prototype        0.500     -133.1        0.0 <- hull
+  69  MC-hcp CuAu                        mc-ordering      0.500     -125.0        8.1 
+  10  B2 CuAu                            prototype        0.500     -118.7       14.4 
+  62  MC-bcc CuAu                        mc-ordering      0.500     -118.7       14.4 
+   9  L1_1 CuAu                          prototype        0.500     -104.4       28.7 
+  23  SS-fcc (avg of 3) CuAu             solid-solution   0.500     -102.8       30.3 
+  35  SS-bcc (avg of 3) CuAu             solid-solution   0.500     -101.8       31.3 
+  47  SS-hcp (avg of 3) CuAu             solid-solution   0.500      -98.4       34.7 
+  15  B1 CuAu                            prototype        0.500      243.0      376.1 
+  56  MC-fcc CuAu2                       mc-ordering      0.667     -108.9        0.0 <- hull
+  70  MC-hcp CuAu2                       mc-ordering      0.667     -103.1        5.8 
+  63  MC-bcc CuAu2                       mc-ordering      0.667      -96.6       12.2 
+  13  C15 CuAu2                          prototype        0.667      154.5      263.4 
+   7  L1_2 CuAu3                         prototype        0.750      -95.1        0.0 <- hull
+  57  MC-fcc CuAu3                       mc-ordering      0.750      -95.1        0.0 <- hull
+  64  MC-bcc CuAu3                       mc-ordering      0.750      -94.3        0.7 
+  71  MC-hcp CuAu3                       mc-ordering      0.750      -86.1        9.0 
+  27  SS-fcc (avg of 3) CuAu3            solid-solution   0.750      -76.7       18.3 
+  39  SS-bcc (avg of 3) CuAu3            solid-solution   0.750      -72.5       22.6 
+  51  SS-hcp (avg of 3) CuAu3            solid-solution   0.750      -68.9       26.2 
+  12  D0_3 CuAu3                         prototype        0.750      -55.6       39.5 
+  58  MC-fcc CuAu7                       mc-ordering      0.875      -47.0        0.5 
+  65  MC-bcc CuAu7                       mc-ordering      0.875      -46.9        0.6 
+  72  MC-hcp CuAu7                       mc-ordering      0.875      -44.7        2.8 
+
+Stability screen:
+  MC-hcp Cu7Au                       Ef=  -48.5 meV  B= 117.8 GPa  minCeig=  19.3 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  L1_2 Cu3Au                         Ef=  -93.3 meV  B= 104.0 GPa  minCeig=  16.3 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  MC-hcp Cu2Au                       Ef= -108.6 meV  B= 115.2 GPa  minCeig=  19.2 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  MC-fcc CuAu                        Ef= -133.1 meV  B= 128.8 GPa  minCeig=  17.8 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  MC-fcc CuAu2                       Ef= -108.9 meV  B= 152.3 GPa  minCeig=  39.3 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  L1_2 CuAu3                         Ef=  -95.1 meV  B= 157.7 GPa  minCeig=  43.0 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally stable)
+  MC-fcc CuAu7                       Ef=  -47.0 meV  B= 165.5 GPa  minCeig=  33.0 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => METASTABLE (near hull)
+
+wrote results/CuAu/report.json and 46 structures (POSCAR + extxyz) in 265.4 s

@@ -1,0 +1,57 @@
+[1/6] elemental references
+[2/6] ordered prototypes
+[3/6] random solid solutions
+[4/6] Monte Carlo chemical-ordering search.....................
+[5/6] convex hull
+[6/6] stability screen (elastic + MD at 600 K)
+   screening L1_2 CuAg3
+   screening MC-bcc CuAg7
+
+Cu-Ag  (Zhou04-EAM)   refs: Cu A1 (fcc) (-3.5400 eV), Ag A1 (fcc) (-2.8500 eV)
+  id  structure                          source             x_B  Ef meV/at      Ehull
+  66  MC-hcp Cu7Ag                       mc-ordering      0.125       39.7       39.7 
+  52  MC-fcc Cu7Ag                       mc-ordering      0.125       43.1       43.1 
+  59  MC-bcc Cu7Ag                       mc-ordering      0.125       43.8       43.8 
+  31  SS-bcc (avg of 3) Cu3Ag            solid-solution   0.250       52.1       52.1 
+  19  SS-fcc (avg of 3) Cu3Ag            solid-solution   0.250       53.6       53.6 
+  43  SS-hcp (avg of 3) Cu3Ag            solid-solution   0.250       54.3       54.3 
+  67  MC-hcp Cu3Ag                       mc-ordering      0.250       55.2       55.2 
+   6  L1_2 Cu3Ag                         prototype        0.250       61.3       61.3 
+  53  MC-fcc Cu3Ag                       mc-ordering      0.250       61.3       61.3 
+  60  MC-bcc Cu3Ag                       mc-ordering      0.250       61.5       61.5 
+  11  D0_3 Cu3Ag                         prototype        0.250       65.7       65.7 
+  61  MC-bcc Cu2Ag                       mc-ordering      0.333       58.6       58.6 
+  68  MC-hcp Cu2Ag                       mc-ordering      0.333       60.4       60.4 
+  54  MC-fcc Cu2Ag                       mc-ordering      0.333       63.1       63.1 
+  14  C15 Cu2Ag                          prototype        0.333       68.3       68.3 
+  69  MC-hcp CuAg                        mc-ordering      0.500       51.1       51.1 
+   8  L1_0 CuAg                          prototype        0.500       52.0       52.0 
+  55  MC-fcc CuAg                        mc-ordering      0.500       53.7       53.7 
+  23  SS-fcc (avg of 3) CuAg             solid-solution   0.500       54.6       54.6 
+  35  SS-bcc (avg of 3) CuAg             solid-solution   0.500       56.4       56.4 
+  47  SS-hcp (avg of 3) CuAg             solid-solution   0.500       57.3       57.3 
+  62  MC-bcc CuAg                        mc-ordering      0.500       66.2       66.2 
+  10  B2 CuAg                            prototype        0.500       66.2       66.2 
+   9  L1_1 CuAg                          prototype        0.500       71.0       71.0 
+  15  B1 CuAg                            prototype        0.500      395.6      395.6 
+  56  MC-fcc CuAg2                       mc-ordering      0.667       39.1       39.1 
+  70  MC-hcp CuAg2                       mc-ordering      0.667       41.0       41.0 
+  63  MC-bcc CuAg2                       mc-ordering      0.667       51.7       51.7 
+  13  C15 CuAg2                          prototype        0.667      353.7      353.7 
+   7  L1_2 CuAg3                         prototype        0.750       29.4       29.4 
+  64  MC-bcc CuAg3                       mc-ordering      0.750       29.7       29.7 
+  57  MC-fcc CuAg3                       mc-ordering      0.750       30.0       30.0 
+  27  SS-fcc (avg of 3) CuAg3            solid-solution   0.750       30.8       30.8 
+  71  MC-hcp CuAg3                       mc-ordering      0.750       33.3       33.3 
+  51  SS-hcp (avg of 3) CuAg3            solid-solution   0.750       35.7       35.7 
+  39  SS-bcc (avg of 3) CuAg3            solid-solution   0.750       36.7       36.7 
+  12  D0_3 CuAg3                         prototype        0.750       72.7       72.7 
+  65  MC-bcc CuAg7                       mc-ordering      0.875       16.9       16.9 
+  58  MC-fcc CuAg7                       mc-ordering      0.875       17.7       17.7 
+  72  MC-hcp CuAg7                       mc-ordering      0.875       19.4       19.4 
+
+Stability screen:
+  L1_2 CuAg3                         Ef=   29.4 meV  B= 119.1 GPa  minCeig=  43.1 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => NOT BOUND (Ef >= 0, phase-separates)
+  MC-bcc CuAg7                       Ef=   16.9 meV  B= 112.2 GPa  minCeig=  17.7 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => NOT BOUND (Ef >= 0, phase-separates)
+
+wrote results/CuAg/report.json and 46 structures (POSCAR + extxyz) in 178.9 s
