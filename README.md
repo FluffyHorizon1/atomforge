@@ -56,3 +56,14 @@ Oxides, nitrides and covalent solids need DFT or reactive potentials.
 
 The Monte Carlo search runs on 48-site cells. Dynamical stability is checked by MD heat-and-quench, not phonons.
 There is no magnetism and no charge transfer (EAM). Alloy energies are qualitative.
+
+## Licence
+
+Copyright (c) 2026 Secured Cyber Solutions Ltd. All rights reserved.
+
+This is proprietary software of Secured Cyber Solutions Ltd, licensed under the
+[Secured Cyber Solutions Proprietary Software Licence v1.0](LICENSE). It is **not open source**:
+no use, copying, modification or distribution is permitted without written permission from SCS.
+Third-party components are listed in [NOTICE](NOTICE).
+
+Licensing enquiries: https://securedcybersolutions.co.uk
