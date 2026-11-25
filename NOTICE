@@ -1,0 +1,18 @@
+atomforge
+Copyright (c) 2026 Secured Cyber Solutions Ltd. All rights reserved.
+
+This repository is proprietary software of Secured Cyber Solutions Ltd, licensed under the
+Secured Cyber Solutions Proprietary Software Licence v1.0 (see LICENSE).
+SPDX-License-Identifier: LicenseRef-SCS-Proprietary-1.0
+
+Third-party components
+----------------------
+  * tools/EAM_code.zhou04 is a copy of tools/eam_database/EAM_code from LAMMPS
+    (https://www.lammps.org), distributed under the GNU General Public Licence
+    version 2. That file is licensed under GPL-2.0, not under the SCS licence.
+  * include/atomforge/zhou04_params.hpp holds parameter values generated from that
+    table. The values are those published by X. W. Zhou, R. A. Johnson and
+    H. N. G. Wadley, Phys. Rev. B 69, 144113 (2004), with Cr from Z. Lin,
+    R. A. Johnson and L. V. Zhigilei, Phys. Rev. B 77, 214108 (2008).
+  * quantum/pyscf_dft_probe.py imports PySCF (Apache License 2.0), which is not
+    included in this repository.
