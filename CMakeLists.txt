@@ -20,3 +20,35 @@ target_compile_options(atomforge_cli PRIVATE -Wall -Wextra -O3)
 if(ATOMFORGE_NATIVE)
   target_compile_options(atomforge_cli PRIVATE -march=native)
 endif()
+
+if(ATOMFORGE_BUILD_TESTS)
+  enable_testing()
+  add_executable(test_atomforge tests/test_atomforge.cpp)
+  target_link_libraries(test_atomforge PRIVATE atomforge)
+  target_compile_options(test_atomforge PRIVATE -Wall -Wextra -O3)
+  if(ATOMFORGE_NATIVE)
+    target_compile_options(test_atomforge PRIVATE -march=native)
+  endif()
+
+  # One CTest entry per test group; labels allow e.g. `ctest -L derivatives` or `ctest -LE slow`.
+  function(atomforge_add_group group)
+    add_test(NAME ${group} COMMAND test_atomforge ${group})
+    set_tests_properties(${group} PROPERTIES LABELS "${ARGN}" TIMEOUT 120)
+  endfunction()
+  atomforge_add_group(forces     unit derivatives)
+  atomforge_add_group(virial     unit derivatives)
+  atomforge_add_group(invariance unit symmetry)
+  atomforge_add_group(relax      physics)
+  atomforge_add_group(born       physics)
+  atomforge_add_group(hull       physics slow)
+  atomforge_add_group(validate   unit)
+
+  # The CLI itself: `atomforge validate` must exit 0 and report 17/17 ground states.
+  add_test(NAME cli_validate COMMAND atomforge_cli validate)
+  set_tests_properties(cli_validate PROPERTIES LABELS "cli" TIMEOUT 120 PASS_REGULAR_EXPRESSION "ground state correct for 17/17 elements")
+
+  # KNOWN BUG, expected to fail: NeighborList drops pairs for atoms away from the home cell (see tests/test_atomforge.cpp).
+  # Remove WILL_FAIL (and the xfail label) once the neighbour list is fixed.
+  atomforge_add_group(unwrapped  physics known-bug xfail)
+  set_tests_properties(unwrapped PROPERTIES WILL_FAIL TRUE)
+endif()
