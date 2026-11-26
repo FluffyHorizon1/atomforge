@@ -97,6 +97,20 @@ inline MDResult run_md(Structure s, const Potential& pot, const MDOptions& o) {
         }
         remove_com();
         for (int i = 0; i < N; ++i) s.pos[i] += v[i] * (0.5 * dt);
+        // Keep coordinates bounded so the neighbour-list image range (and cost) does not grow as atoms diffuse. Only atoms that
+        // have left the home cell by more than one full cell are wrapped, so trajectories that stay near the cell are untouched
+        // bit for bit. `ref` moves with the atom, so the displacement s.pos - ref is unchanged.
+        {
+            const Mat3 inv_t = transpose(inverse(s.cell)), cell_t = transpose(s.cell);
+            for (int i = 0; i < N; ++i) {
+                Vec3 f = inv_t * s.pos[i];
+                if (f.x >= -1 && f.x < 2 && f.y >= -1 && f.y < 2 && f.z >= -1 && f.z < 2) continue;
+                for (int k = 0; k < 3; ++k) f[k] -= std::floor(f[k]);
+                const Vec3 wrapped = cell_t * f;
+                ref[i] += wrapped - s.pos[i];
+                s.pos[i] = wrapped;
+            }
+        }
         ev = pot.evaluate(s, nl);
         for (int i = 0; i < N; ++i) v[i] += ev.forces[i] * (0.5 * dt / m[i]);
 
