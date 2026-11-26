@@ -1,7 +1,8 @@
 // atomforge CLI
 //   atomforge elements
 //   atomforge validate
-//   atomforge search <A> <B> [--out DIR] [--T 600] [--md-steps 3000] [--mc-sweeps 400] [--quick]
+//   atomforge search <A> <B> [--out DIR] [--T 600] [--md-steps 3000] [--mc-sweeps 400] [--quick] [--materials]
+//     --materials also writes <out>/materials-contract-<A><B>.json (forge.materials.v0 sidecar; see include/atomforge/materials.hpp)
 //   atomforge relax <prototype> <A> [B]        e.g. atomforge relax L1_2 Cu Au
 #include "atomforge/atomforge.hpp"
 #include <chrono>
@@ -17,7 +18,7 @@ static void usage() {
               "  atomforge elements\n"
               "  atomforge validate\n"
               "  atomforge relax <prototype> <A> [B]     prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
-              "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick]");
+              "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick] [--materials]");
 }
 
 static int cmd_elements() {
@@ -84,11 +85,13 @@ static int cmd_search(int argc, char** argv) {
     const std::string A = argv[2], B = argv[3];
     SearchOptions opt;
     std::string out = "results/" + A + B;
+    bool materials = false;
     for (int i = 4; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
         else if (!std::strcmp(argv[i], "--T") && i + 1 < argc) opt.md_T = std::atof(argv[++i]);
         else if (!std::strcmp(argv[i], "--md-steps") && i + 1 < argc) opt.md_steps = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--mc-sweeps") && i + 1 < argc) opt.mc_sweeps = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--materials")) materials = true;
         else if (!std::strcmp(argv[i], "--quick")) { opt.mc_sweeps = 100; opt.md_steps = 1000; opt.ss_seeds = 2; }
     }
     const auto t0 = std::chrono::steady_clock::now();
@@ -97,6 +100,7 @@ static int cmd_search(int argc, char** argv) {
 
     fs::create_directories(out + "/structures");
     write_report_json(out + "/report.json", R);
+    if (materials) write_materials_contract_json(out + "/materials-contract-" + A + B + ".json", R);
     std::vector<std::string> els{A, B};
     for (const auto& c : R.candidates) {
         const std::string base = out + "/structures/" + std::to_string(c.id);
@@ -121,6 +125,7 @@ static int cmd_search(int argc, char** argv) {
                     c.thermal.max_site_shift, c.verdict.c_str());
     }
     std::printf("\nwrote %s/report.json and %zu structures (POSCAR + extxyz) in %.1f s\n", out.c_str(), R.candidates.size(), secs);
+    if (materials) std::printf("wrote %s/materials-contract-%s%s.json (forge.materials.v0; Q_dielectric, loss_tangent, junction_gap_ueV are placeholders)\n", out.c_str(), A.c_str(), B.c_str());
     return 0;
 }
 
