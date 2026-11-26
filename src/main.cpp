@@ -26,36 +26,12 @@ static int cmd_elements() {
     return 0;
 }
 
-// Reference data: experimental lattice constants (A) and cohesive energies (eV/atom).
+// Reference data and the relaxation loop live in validate.hpp so the unit tests can inject bad references.
+// Exit non-zero if any ground state is wrong (as on ci/actions-ctest) or any lattice constant is more than
+// validate_lattice_tol_pct from experiment. A passing run's stdout is unchanged.
 static int cmd_validate() {
-    struct Ref { const char* el; const char* gs; double a; double ec; };
-    const Ref refs[] = {{"Cu", "fcc", 3.615, 3.49}, {"Ag", "fcc", 4.086, 2.95}, {"Au", "fcc", 4.078, 3.81}, {"Ni", "fcc", 3.524, 4.44},
-                        {"Pd", "fcc", 3.891, 3.89}, {"Pt", "fcc", 3.924, 5.84}, {"Al", "fcc", 4.050, 3.39}, {"Pb", "fcc", 4.950, 2.03},
-                        {"Fe", "bcc", 2.867, 4.28}, {"Mo", "bcc", 3.147, 6.82}, {"Ta", "bcc", 3.301, 8.10}, {"W", "bcc", 3.165, 8.90},
-                        {"Cr", "bcc", 2.885, 4.10}, {"Mg", "hcp", 3.209, 1.51}, {"Co", "hcp", 2.507, 4.39}, {"Ti", "hcp", 2.951, 4.85},
-                        {"Zr", "hcp", 3.232, 6.25}};
-    std::printf("%-3s %-4s | %-9s %-9s %-6s | %-9s %-9s | %s\n", "El", "GS", "a_calc", "a_expt", "err%", "Ec_calc", "Ec_expt", "predicted GS");
-    int ok = 0;
-    for (const auto& r : refs) {
-        ZhouEAM pot({r.el});
-        double best = 1e9; std::string bestp; double a_gs = 0;
-        for (const auto& p : prototypes()) {
-            if (p.nB) continue;
-            Structure s = p.build(0, 0);
-            detail::scale_to_volume(s, 0.74 * std::pow(ZhouEAM::lookup(r.el)->re, 3));
-            auto rr = relax(s, pot);
-            const double e = rr.energy / s.size();
-            if (p.parent == r.gs) a_gs = (p.parent == "hcp") ? norm(rr.s.cell.row(0)) : std::cbrt(rr.s.volume());
-            if (e < best - 1e-6) { best = e; bestp = p.parent; }
-        }
-        const bool gs_ok = bestp == r.gs;
-        ok += gs_ok;
-        std::printf("%-3s %-4s | %-9.4f %-9.4f %+6.2f | %-9.4f %-9.4f | %s %s\n", r.el, r.gs, a_gs, r.a, 100 * (a_gs - r.a) / r.a,
-                    -best, r.ec, bestp.c_str(), gs_ok ? "OK" : "MISMATCH");
-    }
-    const int nref = int(sizeof(refs) / sizeof(refs[0]));
-    std::printf("ground state correct for %d/%d elements\n", ok, nref);
-    return ok == nref ? 0 : 1;
+    const auto S = validate_elements(reference_elements());
+    return S.passed() ? 0 : 1;
 }
 
 static int cmd_relax(int argc, char** argv) {
