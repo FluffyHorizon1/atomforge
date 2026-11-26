@@ -14,10 +14,14 @@ elements ──► prototypes (L1₂, L1₀, L1₁, B2, D0₃, C15, B1) ──�
 
 ```bash
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-./build/atomforge validate          # 17 elements vs experiment
+./build/atomforge validate          # 17 elements vs experiment; exits non-zero on any failure
 ./build/atomforge relax L1_2 Cu Au  # one structure + elastic constants
 ./build/atomforge search Cu Au      # full binary search -> results/CuAu/ (report.json, POSCAR, extxyz)
 ```
+
+Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binaries are portable);
+`-DATOMFORGE_BUILD_TESTS=OFF` skips the test suite. Tests run with `ctest --test-dir build --output-on-failure`
+(about 4 s, see [Testing](#testing)).
 
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
@@ -26,20 +30,47 @@ Hull structures can go straight to DFT for verification.
 
 The Zhou–Johnson–Wadley analytic EAM (Phys. Rev. B 69, 144113, 2004) covers 17 metals: Cu Ag Au Ni Pd Pt Al Pb Fe
 Mo Ta W Cr Mg Co Ti Zr. Alloy cross terms come from the paper's mixing rule. Parameters were generated from the
-LAMMPS `tools/eam_database` table (GPL-2.0), see `tools/gen_params.py`. Forces and virial are analytic and checked
-against finite differences (errors 6e-9 and 4e-8). The `Potential` interface is abstract, so an ML potential or a
+LAMMPS `tools/eam_database` table (GPL-2.0), see `tools/gen_params.py`. Forces and virial are analytic and are checked
+against central finite differences of the energy and of the strain in `ctest` (worst errors about 8e-9 eV/Å and 4e-8 eV
+on rattled Cu/Au cells, including a triclinic one). The `Potential` interface is abstract, so an ML potential or a
 DFT backend can replace the EAM without touching the search, relaxation, hull or stability code.
 
 ## Validation
 
-* All 17 elements: lattice constants within 0.75% of experiment, and the correct ground state (fcc/bcc/hcp) for all 17.
+`atomforge validate` relaxes every elemental prototype for each of the 17 elements and compares with experiment. It
+exits non-zero if any predicted ground state is wrong or any lattice constant is more than 1% from experiment.
+
+* All 17 elements: lattice constants within 0.75% of experiment (largest deviation: Zr, −0.74%), and the correct ground
+  state (fcc/bcc/hcp) for all 17. This is checked by the `cli_validate` test. Cohesive energies are printed for
+  comparison but are not pass/fail criteria.
 * **Cu–Au:** the search independently rediscovers the experimentally known ordered phases Cu₃Au (L1₂, a = 3.750 Å,
   matching experiment), CuAu (L1₀) and CuAu₃ (L1₂). All are on the hull and pass the mechanical and thermal checks.
-  It also predicts extra hcp-based phases, which are likely artefacts of the potential.
-* **Cu–Ag:** all formation energies positive, so immiscible, as observed.
+  It also predicts extra hcp-based phases, which are likely artefacts of the potential. (The test suite only checks the
+  Cu₃Au lattice constant and, on a reduced search, that L1₂ Cu₃Au is bound and the hull is consistent. The full
+  Cu–Au result above is a recorded run in `results/`, not a test.)
+* **Cu–Ag:** all formation energies positive, so immiscible, as observed (recorded run in `results/`, not a test).
 * **Ni–Al: fails.** The generic mixing rule gives formation energies near zero or positive (B2 NiAl: +0.07 eV/atom),
   where experiment gives about −0.6 eV/atom.
   Strongly bonding intermetallics need quantum-level (DFT) energies. That is the next rung.
+
+## Testing
+
+`ctest` runs `tests/test_atomforge.cpp` (custom `CHECK` macros, one CTest entry per group, labels shown in brackets):
+
+| group | what it checks |
+|-------|----------------|
+| `forces` [unit, derivatives] | analytic forces vs central finite differences on rattled fcc, L1₂ and triclinic L1₁ cells; net force = 0 |
+| `virial` [unit, derivatives] | analytic virial vs finite strain (all six components, triclinic cell too); symmetry and sign convention |
+| `invariance` [unit, symmetry] | energy/forces/virial under translation, rotation, lattice-vector shifts + wrap, and supercell size |
+| `relax` [physics] | FIRE convergence on fcc Cu and rattled Cu₃Au, independent residual-force check, relaxation at 5 GPa |
+| `born` [physics] | fcc Cu elastic constants and Born stability (bulk modulus cross-checked against E(V)); bcc Cu must be unstable |
+| `hull` [physics, slow] | convex hull on synthetic points with a known answer, plus a reduced Cu–Au search |
+| `validate` [unit] | pass and fail paths of the element validation (wrong ground state, wrong lattice constant) |
+| `cli_validate` [cli] | `atomforge validate` exits 0 and reports 17/17 ground states |
+| `unwrapped` [known-bug, xfail] | **expected to fail**: see Limitations |
+
+The suite takes about 4 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, the MD
+integrator, file output (`io.hpp`) or the `search`/`relax` command-line paths.
 
 ## Toward the quantum level
 
@@ -56,6 +87,11 @@ Oxides, nitrides and covalent solids need DFT or reactive potentials.
 
 The Monte Carlo search runs on 48-site cells. Dynamical stability is checked by MD heat-and-quench, not phonons.
 There is no magnetism and no charge transfer (EAM). Alloy energies are qualitative.
+
+Known bug: the neighbour list assumes atoms are in (or very close to) the home cell. Atoms displaced by two or more
+cell vectors, or by one vector in a small triclinic cell, silently lose neighbours and the energy is wrong. `relax` and
+the search keep atoms close to the cell, but `run_md` does not wrap positions, so long or hot MD runs on small cells
+can be affected. Tracked by the expected-fail `unwrapped` test.
 
 ## Licence
 
