@@ -25,3 +25,31 @@ enable_testing()
 add_test(NAME validate COMMAND atomforge_cli validate)
 set_tests_properties(validate PROPERTIES
   PASS_REGULAR_EXPRESSION "ground state correct for 17/17 elements")
+
+if(ATOMFORGE_BUILD_TESTS)
+  add_executable(test_atomforge tests/test_atomforge.cpp)
+  target_link_libraries(test_atomforge PRIVATE atomforge)
+  target_compile_options(test_atomforge PRIVATE -Wall -Wextra -O3)
+  if(ATOMFORGE_NATIVE)
+    target_compile_options(test_atomforge PRIVATE -march=native)
+  endif()
+
+  # One CTest entry per test group; labels allow e.g. `ctest -L derivatives` or `ctest -LE slow`.
+  # The CLI test is named `validate` (from ci/actions-ctest) so the unit-test group is `validate_unit`.
+  function(atomforge_add_group group)
+    add_test(NAME ${group} COMMAND test_atomforge ${group})
+    set_tests_properties(${group} PROPERTIES LABELS "${ARGN}" TIMEOUT 120)
+  endfunction()
+  atomforge_add_group(forces        unit derivatives)
+  atomforge_add_group(virial        unit derivatives)
+  atomforge_add_group(invariance    unit symmetry)
+  atomforge_add_group(relax         physics)
+  atomforge_add_group(born          physics)
+  atomforge_add_group(hull          physics slow)
+  atomforge_add_group(validate_unit unit)
+
+  # KNOWN BUG, expected to fail: NeighborList drops pairs for atoms away from the home cell (see tests/test_atomforge.cpp).
+  # Remove WILL_FAIL (and the xfail label) once the neighbour list is fixed.
+  atomforge_add_group(unwrapped  physics known-bug xfail)
+  set_tests_properties(unwrapped PROPERTIES WILL_FAIL TRUE)
+endif()
