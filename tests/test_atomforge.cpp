@@ -2,8 +2,7 @@
 // stability and the validate path. Same custom CHECK style as qpuforge.
 //
 //   test_atomforge            run every group
-//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit unwrapped
-//   (the default run skips "unwrapped", a known-bug group registered as expected-fail in CTest)
+//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit unwrapped md_invariance
 //   The CLI `atomforge validate` path is the CTest test named `validate` from ci/actions-ctest, not a group here.
 #include "atomforge/atomforge.hpp"
 #include <chrono>
@@ -134,7 +133,7 @@ static void test_invariance() {
     CHECK(dW < 1e-9, "virial does not rotate covariantly: %.3e", dW);
 
     // move atoms by whole lattice vectors (PBC images of the same crystal), then wrap back into the cell.
-    // (Evaluating the shifted, unwrapped structure directly is a known bug, see test_unwrapped.)
+    // (Evaluating the shifted, unwrapped structure directly is covered by test_unwrapped.)
     Structure im = s;
     for (std::size_t i = 0; i < im.size(); ++i) {
         const int a = int(i % 5) - 2, b = int((i / 5) % 3) - 1, c = int(i % 2) ? 3 : -2;
@@ -155,21 +154,25 @@ static void test_invariance() {
     CHECK(std::abs(e1 - e2) < 1e-9 && std::abs(e1 - e3) < 1e-9, "energy per atom depends on supercell size");
 }
 
-// KNOWN BUG (reported in the PR, registered as expected-fail in CTest): NeighborList::build only scans images up to
-// ceil((rc+skin)/width) around the cell, so it silently drops pairs when atoms are not in (or very near) the home cell:
-// offsets of 2+ cells in a 7 A cell, or of just 0/1 cells between atoms in a small triclinic cell. run_md never wraps, so a
-// diffusing/melting system can hit this. The energy then depends on how far an atom has drifted. Once the neighbour list handles this, the expected-fail marker in CMakeLists.txt must be removed.
+// Regression test for a fixed bug: NeighborList::build used to scan only images up to ceil((rc+skin)/width) around the home
+// cell, so it silently dropped pairs when atoms were not in (or very near) the home cell: offsets of 2+ cells in a 7 A cell,
+// or of just 0/1 cells between atoms in a small triclinic cell. The energy then depended on how far an atom had drifted.
+// The image range now grows with the spread of the atoms' fractional coordinates.
 static void test_unwrapped() {
-    std::puts("[unwrapped] KNOWN BUG: energy of atoms displaced by whole lattice vectors >= 2 cells (expected fail)");
+    std::puts("[unwrapped] energy and forces of atoms displaced by whole lattice vectors (no wrap)");
     ZhouEAM cu({"Cu"});
     Structure s = proto("A1", 0, 0).supercell(2, 2, 2);
     s.deform(Mat3::diag(3.6148, 3.6148, 3.6148));
-    const double e0 = energy(s, cu);
-    for (int k : {2, 3}) {
+    const auto ref = evaluate(s, cu);
+    const double e0 = ref.energy;
+    for (int k : {-3, -2, 2, 3, 7}) {
         Structure t = s; t.pos[0] += s.cell.row(0) * k;
-        const double d = energy(t, cu) - e0;
-        std::printf("  atom 0 shifted by %d lattice vectors: dE = %.3e eV\n", k, d);
+        const auto ev = evaluate(t, cu);
+        const double d = ev.energy - e0;
+        double df = 0; for (std::size_t i = 0; i < s.size(); ++i) df = std::max(df, norm(ev.forces[i] - ref.forces[i]));
+        std::printf("  atom 0 shifted by %2d lattice vectors: dE = %.3e eV, max dF = %.2e eV/A\n", k, d, df);
         CHECK(std::abs(d) < 1e-9, "energy changed by %.3e eV after shifting one atom by %d lattice vectors", d, k);
+        CHECK(df < 1e-9, "forces changed by %.3e eV/A after shifting one atom by %d lattice vectors", df, k);
     }
     // also in a small triclinic cell, where even a single-cell offset between atoms is not enough to be safe
     const Structure q = rattled("L1_1", 2, 2, 2, 3.75, 0.07, 6);
@@ -179,6 +182,53 @@ static void test_unwrapped() {
     const double d = energy(im, pot) - energy(q, pot);
     std::printf("  triclinic CuAu, atoms offset by 0/1 lattice vectors: dE = %.3e eV\n", d);
     CHECK(std::abs(d) < 1e-9, "energy changed by %.3e eV after offsetting atoms by 0/1 lattice vectors", d);
+    // every atom shifted by a different, larger offset, in both a cubic and the triclinic cell
+    Structure big = q;
+    for (std::size_t i = 0; i < big.size(); ++i) big.pos[i] += q.cell.row(0) * (int(i % 5) - 2) + q.cell.row(1) * (int(i % 3) - 1) + q.cell.row(2) * ((i % 2) ? 4 : -3);
+    const double db = energy(big, pot) - energy(q, pot);
+    std::printf("  triclinic CuAu, atoms offset by up to 4 lattice vectors: dE = %.3e eV\n", db);
+    CHECK(std::abs(db) < 1e-9, "energy changed by %.3e eV after offsetting atoms by up to 4 lattice vectors", db);
+    // wrapped configurations must be unaffected: wrap() of the shifted structures gives the same energy
+    Structure bw = big; bw.wrap();
+    CHECK(std::abs(energy(bw, pot) - energy(q, pot)) < 1e-9, "wrapped copy of the shifted structure has a different energy");
+}
+
+// MD energy must not depend on which periodic image each atom started in. Shifts of +-1 cell stay in place; shifts of 3-6 cells
+// make run_md wrap atoms back (it wraps atoms that are more than one cell outside the home cell).
+static void test_md_invariance() {
+    std::puts("[md_invariance] run_md results are invariant under per-atom lattice-vector shifts of the start structure");
+    ZhouEAM cu({"Cu"});
+    Structure s = proto("A1", 0, 0).supercell(2, 2, 2);
+    s.deform(Mat3::diag(3.6148, 3.6148, 3.6148));
+    std::mt19937 rng(5);
+    std::uniform_real_distribution<double> U(-0.05, 0.05);
+    for (auto& r : s.pos) r += Vec3{U(rng), U(rng), U(rng)};
+    MDOptions o; o.T = 600; o.steps = 300; o.seed = 3;
+    const auto ref = run_md(s, cu, o);
+    struct Case { const char* name; int lo, span; };
+    for (const Case& c : {Case{"shifts -1..1 cells (kept unwrapped)", -1, 3}, Case{"shifts 3..6 cells (wrapped by run_md)", 3, 4}}) {
+        Structure t = s;
+        for (std::size_t i = 0; i < t.size(); ++i)
+            t.pos[i] += s.cell.row(0) * (c.lo + int(i % c.span)) + s.cell.row(1) * (c.lo + int((i / 2) % c.span)) - s.cell.row(2) * (c.lo + int((i / 3) % c.span));
+        const auto md = run_md(t, cu, o);
+        // final positions agree modulo a lattice vector
+        const Mat3 inv_t = transpose(inverse(ref.final.cell));
+        double dpos = 0;
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            Vec3 f = inv_t * (md.final.pos[i] - ref.final.pos[i]);
+            for (int k = 0; k < 3; ++k) f[k] -= std::round(f[k]);
+            dpos = std::max(dpos, norm(transpose(ref.final.cell) * f));
+        }
+        std::printf("  %-40s <Epot> %.8f vs %.8f eV/atom, <T> %.3f vs %.3f K, <P> %.4f vs %.4f GPa, rms_disp %.6f vs %.6f, max dpos %.1e A\n",
+                    c.name, md.mean_epot_per_atom, ref.mean_epot_per_atom, md.mean_T, ref.mean_T, md.mean_P_GPa, ref.mean_P_GPa, md.rms_disp, ref.rms_disp, dpos);
+        CHECK(std::abs(md.mean_epot_per_atom - ref.mean_epot_per_atom) < 1e-8, "%s: mean Epot differs by %.3e eV/atom", c.name, md.mean_epot_per_atom - ref.mean_epot_per_atom);
+        CHECK(std::abs(md.mean_T - ref.mean_T) < 1e-6, "%s: mean T differs by %.3e K", c.name, md.mean_T - ref.mean_T);
+        CHECK(std::abs(md.mean_P_GPa - ref.mean_P_GPa) < 1e-6, "%s: mean P differs by %.3e GPa", c.name, md.mean_P_GPa - ref.mean_P_GPa);
+        CHECK(std::abs(md.rms_disp - ref.rms_disp) < 1e-6, "%s: rms displacement differs by %.3e A", c.name, md.rms_disp - ref.rms_disp);
+        CHECK(dpos < 1e-6, "%s: final positions differ by %.3e A (mod lattice)", c.name, dpos);
+    }
+    // sanity: the control must actually move atoms, otherwise the comparison proves nothing
+    CHECK(ref.rms_disp > 0.01, "MD barely moved the atoms (rms displacement %.3e A)", ref.rms_disp);
 }
 
 static void test_relax() {
@@ -359,11 +409,11 @@ static void test_validate_unit() {
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"forces", test_forces}, {"virial", test_virial}, {"invariance", test_invariance}, {"relax", test_relax},
-                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"unwrapped", test_unwrapped}};
+                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"unwrapped", test_unwrapped}, {"md_invariance", test_md_invariance}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     bool ran = false;
     for (const auto& g : groups) {
-        if (want ? std::strcmp(want, g.name) : !std::strcmp(g.name, "unwrapped")) continue;
+        if (want && std::strcmp(want, g.name)) continue;
         const auto t0 = std::chrono::steady_clock::now();
         g.fn();
         std::printf("  (%s: %.2f s)\n", g.name, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
