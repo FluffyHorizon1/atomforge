@@ -1,0 +1,24 @@
+# Matches the existing hand-formatted style (4-space indent, attached braces, long lines, dense one-liners).
+# Reference only: the code base has NOT been reformatted with it.
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 160
+BreakBeforeBraces: Attach
+AccessModifierOffset: -4
+NamespaceIndentation: None
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortBlocksOnASingleLine: Always
+AllowShortCaseLabelsOnASingleLine: true
+PointerAlignment: Left
+SpaceBeforeParens: ControlStatements
+BinPackArguments: true
+BinPackParameters: true
+AlignAfterOpenBracket: Align
+ReflowComments: false
+SortIncludes: false
+IndentCaseLabels: true
