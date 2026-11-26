@@ -22,6 +22,24 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
 
+## Materials sidecar (`forge.materials.v0`)
+
+```bash
+./build/atomforge search Cu Au --materials   # also writes results/CuAu/materials-contract-CuAu.json
+```
+
+Writes the interchange sidecar proposed in qpuforge
+[`docs/DATA_CONTRACT.md`](https://github.com/FluffyHorizon1/qpuforge/blob/f64238f/docs/DATA_CONTRACT.md)
+(branch `docs/materials-data-contract`, commit `f64238f`); the writer is `include/atomforge/materials.hpp`.
+
+- **Real (computed by the EAM model):** `produced_by`, `system`, `structures_ref`, and an additive optional block
+  `atomforge_computed` with elemental references and hull phases (energies, formation energies, cell edges and angles, Born
+  elastic constants). These are classical-EAM numbers, not DFT.
+- **Placeholders (not computed, `value: null`, `status: "placeholder"`):** `Q_dielectric`, `loss_tangent`,
+  `junction_gap_ueV`. They are listed in the top-level `placeholders` array. Do not copy them into a chip JSON.
+
+The contract is still a proposal, so the format may change.
+
 ## Energy model
 
 The Zhou–Johnson–Wadley analytic EAM (Phys. Rev. B 69, 144113, 2004) covers 17 metals: Cu Ag Au Ni Pd Pt Al Pb Fe
