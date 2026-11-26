@@ -53,8 +53,9 @@ static int cmd_validate() {
         std::printf("%-3s %-4s | %-9.4f %-9.4f %+6.2f | %-9.4f %-9.4f | %s %s\n", r.el, r.gs, a_gs, r.a, 100 * (a_gs - r.a) / r.a,
                     -best, r.ec, bestp.c_str(), gs_ok ? "OK" : "MISMATCH");
     }
-    std::printf("ground state correct for %d/%zu elements\n", ok, sizeof(refs) / sizeof(refs[0]));
-    return 0;
+    const int nref = int(sizeof(refs) / sizeof(refs[0]));
+    std::printf("ground state correct for %d/%d elements\n", ok, nref);
+    return ok == nref ? 0 : 1;
 }
 
 static int cmd_relax(int argc, char** argv) {

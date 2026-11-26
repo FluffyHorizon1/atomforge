@@ -5,9 +5,21 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
+
+# Host-specific codegen; leave OFF for reproducible CI and release binaries.
+option(ATOMFORGE_NATIVE "Enable -march=native for the CLI" OFF)
+
 add_library(atomforge INTERFACE)
 target_include_directories(atomforge INTERFACE include)
 add_executable(atomforge_cli src/main.cpp)
 set_target_properties(atomforge_cli PROPERTIES OUTPUT_NAME atomforge)
 target_link_libraries(atomforge_cli PRIVATE atomforge)
-target_compile_options(atomforge_cli PRIVATE -Wall -Wextra -O3 -march=native)
+target_compile_options(atomforge_cli PRIVATE -Wall -Wextra -O3)
+if(ATOMFORGE_NATIVE)
+  target_compile_options(atomforge_cli PRIVATE -march=native)
+endif()
+
+enable_testing()
+add_test(NAME validate COMMAND atomforge_cli validate)
+set_tests_properties(validate PROPERTIES
+  PASS_REGULAR_EXPRESSION "ground state correct for 17/17 elements")
