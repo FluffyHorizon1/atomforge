@@ -40,7 +40,8 @@ or `ExternalOptions::masses`. A worker that cannot serve the elements replies `{
 - `cell`: rows are the lattice vectors, in Å. `positions`: Cartesian, Å, not necessarily inside the home cell.
 - `species` indexes the handshake's `elements`; `symbols` repeats the same information as element symbols.
 - `id` increases by one per request, starting at 1. The reply must carry the same `id`.
-- `energy`: total energy of the cell, eV.
+- `energy`: total energy of the cell, eV. It must be the quantity that `forces` and `virial` are derivatives of: with
+  electronic smearing that is the Mermin free energy `E - sigma*S`, not `E`.
 - `forces`: one `[fx,fy,fz]` per atom, in the order of `positions`, eV/Å, `F = -dE/dR`.
 - `virial`: 3×3, eV, `W_ab = dE/d(eps_ab)` for a symmetric strain `eps` applied to cell and positions (`r -> (I + eps) r`).
   This is the convention of `ZhouEAM`: W is positive along a direction in which stretching raises the energy, so a cell
@@ -65,7 +66,8 @@ atomforge then throws `ExternalPotentialError` with that message, and the worker
 atomforge also closes the worker's stdin. A worker should exit when it reads `exit` or end of file. A worker that has not
 exited after 2 s is killed.
 
-Numbers are written with 17 significant digits (round-trip exact for IEEE doubles).
+Replies may carry extra fields (the `pyscf` backend adds `energy_sigma0`, the energy extrapolated to zero smearing);
+atomforge ignores them. Numbers are written with 17 significant digits (round-trip exact for IEEE doubles).
 
 ## Failure handling
 
@@ -100,7 +102,7 @@ python3 quantum/worker.py --check pyscf     # exit 0 if usable here, 77 if its p
   images, so it runs wherever `python3` does. It exists to test the bridge; `--fault crash|hang|nan|shape|garbage|badid|error`
   makes it misbehave on purpose for the error-path tests.
 - `pyscf` runs periodic Kohn–Sham DFT with the settings of `quantum/pyscf_dft_probe.py` (GTH pseudopotentials, k-point
-  mesh, Fermi smearing in Hartree), returns analytic forces and the analytic stress, and reuses the previous density matrix as
+  mesh, Fermi smearing in Hartree), returns the free energy with its analytic forces and stress, and reuses the previous density matrix as
   the initial guess when the atoms are the same species in the same order.
 - `mace` uses the MACE foundation model through ASE, in double precision.
 

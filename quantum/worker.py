@@ -173,8 +173,13 @@ class PySCF:
         forces = (-grad * HARTREE_EV / BOHR_A).tolist()
         stress = (sigma * HARTREE_EV / BOHR_A ** 3)
         stress = (0.5 * (stress + stress.T)).tolist()
-        log("E = %.8f Ha  max|g| = %.3e  cycles ok" % (e, float(np.abs(grad).max())))
-        return {"energy": float(e) * HARTREE_EV, "forces": forces, "stress": stress}
+        # With smearing the SCF minimises the Mermin free energy F = E - sigma*S, and the analytic forces and stress are
+        # derivatives of F, not of E. Return F so that energy, forces and stress are consistent (FIRE needs that).
+        f = getattr(mf, "e_free", None)
+        f = float(e) if f is None else float(f)
+        log("E = %.8f Ha  F = %.8f Ha  max|g| = %.3e" % (e, f, float(np.abs(grad).max())))
+        return {"energy": f * HARTREE_EV, "energy_sigma0": float(getattr(mf, "e_zero", e) or e) * HARTREE_EV,
+                "forces": forces, "stress": stress}
 
 
 class MACE:
