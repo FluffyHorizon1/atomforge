@@ -55,8 +55,7 @@ if(ATOMFORGE_BUILD_TESTS)
   atomforge_add_group(hull          physics slow)
   atomforge_add_group(validate_unit unit)
 
-  # KNOWN BUG, expected to fail: NeighborList drops pairs for atoms away from the home cell (see tests/test_atomforge.cpp).
-  # Remove WILL_FAIL (and the xfail label) once the neighbour list is fixed.
-  atomforge_add_group(unwrapped  physics known-bug xfail)
-  set_tests_properties(unwrapped PROPERTIES WILL_FAIL TRUE)
+  # Regression tests for the NeighborList fix: atoms displaced by whole lattice vectors, and MD invariance under such shifts.
+  atomforge_add_group(unwrapped     physics symmetry)
+  atomforge_add_group(md_invariance physics symmetry)
 endif()
