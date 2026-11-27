@@ -252,6 +252,12 @@ static void test_external_errors() {
         if (f) std::fclose(f);
         CHECK(txt.find("[worker] started lj(") != std::string::npos, "worker stderr not in log %s: '%s'", x.log_path.c_str(), txt.c_str());
     }
+    // A failed worker's children die with it (the worker runs in its own process group).
+    expect_error("worker with a background child", [&] { ExternalPotential p("sh -c 'sleep 7.3125 & read l; echo garbage; sleep 9'", {"Ar"}, with("child")); }, "malformed JSON");
+    const int stray = std::system("pgrep -f '[s]leep 7.3125' >/dev/null 2>&1");
+    CHECK(stray != 0, "the worker's background child survived the worker");
+    if (stray == 0 && std::system("pkill -f '[s]leep 7.3125'") != 0) std::puts("  (pkill failed)");
+
     // JSON parser corner cases
     CHECK(std::isnan(json::parse("{\"e\": NaN}").get("e")->num), "NaN token");
     CHECK(json::parse("[1, -2.5e-3, \"a\\\"b\", true, null]").arr.size() == 5, "array parse");

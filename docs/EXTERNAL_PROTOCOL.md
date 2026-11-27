@@ -86,7 +86,8 @@ atomforge ignores them. Numbers are written with 17 significant digits (round-tr
 | `NaN` or `±Infinity` anywhere in energy, forces or virial | `not finite` |
 | an `error` reply | `worker reported an error` |
 
-In every case except an `error` reply, the worker is killed (SIGKILL) and later calls throw `external worker is not
+In every case except an `error` reply, the worker is killed (SIGKILL to its process group: the worker is started in a
+group of its own, so processes it started die with it) and later calls throw `external worker is not
 running`; atomforge does not restart workers. Messages include the tail of the stderr log.
 
 ## The reference worker

@@ -285,6 +285,7 @@ private:
     double cutoff_ = 0;
     std::vector<double> masses_;
     mutable pid_t pid_ = -1;
+    mutable pid_t pgid_ = -1;    // the worker's process group (= its pid at spawn)
     mutable int fd_ = -1;        // our end of the socketpair (worker stdin+stdout)
     mutable std::string rbuf_;
     mutable long next_id_ = 1;
@@ -309,14 +310,20 @@ private:
         std::vector<char> c(shcmd.begin(), shcmd.end()); c.push_back('\0');
         char* argv[] = {a0, a1, c.data(), nullptr};
         pid_t pid = -1;
-        const int rc = ::posix_spawn(&pid, "/bin/sh", &fa, nullptr, argv, environ);
+        // Own process group, so kill_worker() also reaches anything the worker started (shell pipelines, MPI ranks).
+        posix_spawnattr_t at;
+        posix_spawnattr_init(&at);
+        posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
+        posix_spawnattr_setpgroup(&at, 0);
+        const int rc = ::posix_spawn(&pid, "/bin/sh", &fa, &at, argv, environ);
+        posix_spawnattr_destroy(&at);
         posix_spawn_file_actions_destroy(&fa);
         ::close(sv[1]);
         if (rc != 0) {
             ::close(sv[0]);
             throw ExternalPotentialError("cannot start worker '" + cmd_ + "': " + std::strerror(rc));
         }
-        pid_ = pid;
+        pid_ = pgid_ = pid;
         fd_ = sv[0];
         ::fcntl(fd_, F_SETFL, ::fcntl(fd_, F_GETFL) | O_NONBLOCK);
     }
@@ -432,6 +439,8 @@ private:
     }
     void kill_worker() const {
         if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+        // The whole process group, even if the worker itself has already exited and left children behind.
+        if (pgid_ > 0) { ::kill(-pgid_, SIGKILL); pgid_ = -1; }
         if (pid_ > 0) {
             ::kill(pid_, SIGKILL);
             int st = 0;
