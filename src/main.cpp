@@ -6,6 +6,7 @@
 #include "atomforge/atomforge.hpp"
 #include "atomforge/external.hpp"
 #include "atomforge/lj.hpp"
+#include "atomforge/phonons.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -21,7 +22,8 @@ static void usage() {
               "  atomforge elements\n"
               "  atomforge validate\n"
               "  atomforge relax <prototype> <A> [B] [--potential eam|lj[:eps,sigma,rc]|external:CMD] [--volume V]\n"
-              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--worker-timeout S] [--worker-log PATH]\n"
+              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--phonons] [--phonon-supercell N]\n"
+              "                 [--worker-timeout S] [--worker-log PATH]\n"
               "                                          prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
               "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick]");
 }
@@ -67,6 +69,8 @@ static int cmd_relax(int argc, char** argv) {
     std::string spec = "eam";
     ExternalOptions xo;
     double volume = 0, fmax = 1e-3;
+    bool phonons = false;
+    PhononOptions po;
     int elastic = -1;   // -1: default (on for eam/lj, off for external, where it costs ~25 more evaluations)
     CellMode cell = CellMode::Full;
     for (int i = 2; i < argc; ++i) {
@@ -89,6 +93,13 @@ static int cmd_relax(int argc, char** argv) {
         else if (a == "--worker-log") xo.log_path = val();
         else if (a == "--elastic") elastic = 1;
         else if (a == "--no-elastic") elastic = 0;
+        else if (a == "--phonons") phonons = true;
+        else if (a == "--phonon-supercell") {
+            const double n = num(0);
+            if (n != std::floor(n) || n > 16) throw std::runtime_error("--phonon-supercell expects an integer 1..16");
+            po.n[0] = po.n[1] = po.n[2] = int(n);
+            phonons = true;
+        }
         else if (a == "--cell") {
             const std::string c = val();
             if (c == "full") cell = CellMode::Full;
@@ -128,6 +139,15 @@ static int cmd_relax(int argc, char** argv) {
         auto el = elastic_tensor(r.s, *pot);
         std::printf("  C11=%.1f C12=%.1f C44=%.1f GPa | B=%.1f G=%.1f GPa | min eig %.1f -> %s\n", el.C[0][0], el.C[0][1], el.C[3][3],
                     el.bulk_voigt, el.shear_voigt, el.eigen[0], el.mechanically_stable ? "Born-stable" : "Born-UNSTABLE");
+    }
+    if (phonons) {
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto FC = force_constants(r.s, *pot, po);
+        const auto P = phonon_check(FC, po.imag_tol_THz);
+        std::printf("  phonons (%dx%dx%d supercell, %ld evaluations, %.1f s): %d commensurate q, min %.3f max %.3f THz, "
+                    "%d modes below -%.2f THz -> %s\n", P.n[0], P.n[1], P.n[2], P.evaluations,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count(), P.nq, P.min_THz, P.max_THz,
+                    P.n_imag, P.imag_tol_THz, P.stable ? "dynamically stable" : "dynamically UNSTABLE");
     }
     return 0;
 }
