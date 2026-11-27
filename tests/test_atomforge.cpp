@@ -2,7 +2,7 @@
 // stability and the validate path. Same custom CHECK style as qpuforge.
 //
 //   test_atomforge            run every group
-//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit unwrapped
+//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit cli unwrapped
 //   (the default run skips "unwrapped", a known-bug group registered as expected-fail in CTest)
 //   The CLI `atomforge validate` path is the CTest test named `validate` from ci/actions-ctest, not a group here.
 #include "atomforge/atomforge.hpp"
@@ -10,6 +10,10 @@
 #include <cstdio>
 #include <cstring>
 #include <random>
+#include <filesystem>
+#include <unistd.h>
+#include <sys/wait.h>
+namespace fs = std::filesystem;
 
 using namespace atomforge;
 static int g_fail = 0, g_pass = 0;
@@ -356,10 +360,59 @@ static void test_validate_unit() {
     for (const auto& r : reference_elements()) CHECK(ZhouEAM::lookup(r.el) != nullptr, "%s has no Zhou04 parameters", r.el);
 }
 
+
+// ---------------------------------------------------------------- cli: unknown / invalid search arguments must fail fast (a01)
+static std::string atomforge_exe() {
+    char buf[4096];
+    const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = 0;
+        const fs::path p = fs::path(buf).parent_path() / "atomforge";
+        if (fs::exists(p)) return p.string();
+    }
+    if (fs::exists("./atomforge")) return "./atomforge";
+    return "atomforge";
+}
+static int run_cli(const std::string& args, std::string& out, int timeout_s = 3) {
+    const std::string cmd = "/usr/bin/timeout " + std::to_string(timeout_s) + "s " + atomforge_exe() + " " + args + " 2>&1";
+    out.clear();
+    FILE* fp = popen(cmd.c_str(), "r");
+    if (!fp) return 127;
+    char buf[512];
+    while (fgets(buf, sizeof(buf), fp)) out += buf;
+    const int st = pclose(fp);
+    if (st == -1) return 127;
+    if (WIFEXITED(st)) return WEXITSTATUS(st);
+    return 128;
+}
+static void test_cli() {
+    std::puts("[cli] unknown, missing, non-numeric and out-of-range search arguments exit non-zero without starting a search");
+    std::string out;
+    int st = run_cli("", out);
+    CHECK(st == 1 && out.find("search") != std::string::npos, "no args: status %d", st);
+    st = run_cli("search Cu Au --quik", out);
+    CHECK(st == 1 && out.find("unknown option") != std::string::npos, "--quik typo: status %d out='%s'", st, out.c_str());
+    CHECK(out.find("[1/") == std::string::npos, "--quik must not start a search");
+    st = run_cli("search Cu Au --T abc", out);
+    CHECK(st == 1 && out.find("error:") != std::string::npos, "--T abc: status %d out='%s'", st, out.c_str());
+    st = run_cli("search Cu Au --md-steps", out);
+    CHECK(st == 1 && out.find("requires a value") != std::string::npos, "--md-steps missing: status %d out='%s'", st, out.c_str());
+    st = run_cli("search Cu Au --T", out);
+    CHECK(st == 1 && out.find("requires a value") != std::string::npos, "--T missing: status %d", st);
+    st = run_cli("search Cu Au --out", out);
+    CHECK(st == 1 && out.find("requires a value") != std::string::npos, "--out missing: status %d", st);
+    st = run_cli("search Cu Au --md-steps -5", out);
+    CHECK(st == 1 && out.find("error:") != std::string::npos, "--md-steps -5: status %d out='%s'", st, out.c_str());
+    st = run_cli("search Cu Au --mc-sweeps 0", out);
+    CHECK(st == 1 && out.find("error:") != std::string::npos, "--mc-sweeps 0: status %d out='%s'", st, out.c_str());
+    st = run_cli("search Cu Au --T 0", out);
+    CHECK(st == 1, "--T 0 (not > 0): status %d", st);
+}
+
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"forces", test_forces}, {"virial", test_virial}, {"invariance", test_invariance}, {"relax", test_relax},
-                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"unwrapped", test_unwrapped}};
+                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"cli", test_cli}, {"unwrapped", test_unwrapped}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     bool ran = false;
     for (const auto& g : groups) {

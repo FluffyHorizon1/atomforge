@@ -54,6 +54,7 @@ if(ATOMFORGE_BUILD_TESTS)
   atomforge_add_group(born          physics)
   atomforge_add_group(hull          physics slow)
   atomforge_add_group(validate_unit unit)
+  atomforge_add_group(cli            unit)
 
   # KNOWN BUG, expected to fail: NeighborList drops pairs for atoms away from the home cell (see tests/test_atomforge.cpp).
   # Remove WILL_FAIL (and the xfail label) once the neighbour list is fixed.

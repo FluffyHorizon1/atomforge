@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 
 using namespace atomforge;
@@ -61,12 +62,57 @@ static int cmd_search(int argc, char** argv) {
     const std::string A = argv[2], B = argv[3];
     SearchOptions opt;
     std::string out = "results/" + A + B;
-    for (int i = 4; i < argc; ++i) {
-        if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
-        else if (!std::strcmp(argv[i], "--T") && i + 1 < argc) opt.md_T = std::atof(argv[++i]);
-        else if (!std::strcmp(argv[i], "--md-steps") && i + 1 < argc) opt.md_steps = std::atoi(argv[++i]);
-        else if (!std::strcmp(argv[i], "--mc-sweeps") && i + 1 < argc) opt.mc_sweeps = std::atoi(argv[++i]);
-        else if (!std::strcmp(argv[i], "--quick")) { opt.mc_sweeps = 100; opt.md_steps = 1000; opt.ss_seeds = 2; }
+    int i = 4;
+    auto need = [&](const char* optname) -> const char* {
+        if (i + 1 >= argc) {
+            std::fprintf(stderr, "error: %s requires a value\n", optname);
+            return nullptr;
+        }
+        return argv[++i];
+    };
+    auto parse_int = [&](const char* optname, int lo, int* dest) -> bool {
+        const char* s = need(optname); if (!s) return false;
+        char* end = nullptr;
+        const long v = std::strtol(s, &end, 10);
+        if (end == s || *end != '\0' || v < lo || v > 1000000000L) {
+            std::fprintf(stderr, "error: %s expects an integer >= %d, got '%s'\n", optname, lo, s);
+            return false;
+        }
+        *dest = int(v);
+        return true;
+    };
+    auto parse_double = [&](const char* optname, double lo, double* dest) -> bool {
+        const char* s = need(optname); if (!s) return false;
+        char* end = nullptr;
+        const double v = std::strtod(s, &end);
+        if (end == s || *end != '\0' || !(v > lo)) {
+            std::fprintf(stderr, "error: %s expects a number > %g, got '%s'\n", optname, lo, s);
+            return false;
+        }
+        *dest = v;
+        return true;
+    };
+    for (; i < argc; ++i) {
+        if (!std::strcmp(argv[i], "--out")) {
+            const char* s = need("--out"); if (!s) return 1;
+            out = s;
+        } else if (!std::strcmp(argv[i], "--T")) {
+            if (!parse_double("--T", 0.0, &opt.md_T)) return 1;
+        } else if (!std::strcmp(argv[i], "--md-steps")) {
+            if (!parse_int("--md-steps", 1, &opt.md_steps)) return 1;
+        } else if (!std::strcmp(argv[i], "--mc-sweeps")) {
+            if (!parse_int("--mc-sweeps", 1, &opt.mc_sweeps)) return 1;
+        } else if (!std::strcmp(argv[i], "--quick")) {
+            opt.mc_sweeps = 100; opt.md_steps = 1000; opt.ss_seeds = 2;
+        } else if (argv[i][0] == '-') {
+            std::fprintf(stderr, "error: unknown option %s\n", argv[i]);
+            usage();
+            return 1;
+        } else {
+            std::fprintf(stderr, "error: unexpected argument %s\n", argv[i]);
+            usage();
+            return 1;
+        }
     }
     const auto t0 = std::chrono::steady_clock::now();
     auto R = binary_search(A, B, opt);
