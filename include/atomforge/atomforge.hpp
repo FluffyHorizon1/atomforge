@@ -9,3 +9,4 @@
 #include "search.hpp"
 #include "io.hpp"
 #include "validate.hpp"
+#include "materials.hpp"
