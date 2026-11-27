@@ -8,9 +8,27 @@ endif()
 
 # Host-specific codegen; leave OFF for reproducible CI and release binaries.
 option(ATOMFORGE_NATIVE "Enable -march=native for the CLI" OFF)
+option(ATOMFORGE_BUILD_TESTS "Build the tests/ CTest suite (the CLI validate test is always registered)" ON)
+
+# --- forge.materials.v0 sidecar: record the git commit ("unknown" outside a git checkout).
+find_package(Git QUIET)
+set(ATOMFORGE_GIT_COMMIT "unknown")
+if(GIT_FOUND)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+                  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                  OUTPUT_VARIABLE _af_commit OUTPUT_STRIP_TRAILING_WHITESPACE
+                  RESULT_VARIABLE _af_rc ERROR_QUIET)
+  if(_af_rc EQUAL 0 AND _af_commit)
+    set(ATOMFORGE_GIT_COMMIT "${_af_commit}")
+  endif()
+endif()
+# --- end forge.materials.v0 sidecar (commit) ---
 
 add_library(atomforge INTERFACE)
-target_include_directories(atomforge INTERFACE include)
+target_include_directories(atomforge INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# --- forge.materials.v0 sidecar: embed the commit in the sidecar writer.
+target_compile_definitions(atomforge INTERFACE ATOMFORGE_GIT_COMMIT="${ATOMFORGE_GIT_COMMIT}")
+# --- end forge.materials.v0 sidecar (commit define) ---
 add_executable(atomforge_cli src/main.cpp)
 set_target_properties(atomforge_cli PROPERTIES OUTPUT_NAME atomforge)
 target_link_libraries(atomforge_cli PRIVATE atomforge)
@@ -30,3 +48,25 @@ add_test(NAME validate COMMAND atomforge_cli validate)
 # appear in a passing run's output.
 set_tests_properties(validate PROPERTIES
   FAIL_REGULAR_EXPRESSION "MISMATCH")
+
+# --- forge.materials.v0 sidecar tests (self-contained block).
+# Sits after the CLI validate test so it composes with ci/actions-ctest and with
+# chore/atomforge-tests-suite: if both if(ATOMFORGE_BUILD_TESTS) blocks appear,
+# keep both. Labels follow the suite's scheme (`ctest -L materials`, `-L unit`,
+# `-LE slow`).
+if(ATOMFORGE_BUILD_TESTS)
+  add_executable(test_materials_contract tests/test_materials_contract.cpp)
+  target_link_libraries(test_materials_contract PRIVATE atomforge)
+  target_compile_options(test_materials_contract PRIVATE -Wall -Wextra -O3)
+  if(ATOMFORGE_NATIVE)
+    target_compile_options(test_materials_contract PRIVATE -march=native)
+  endif()
+  foreach(group schema placeholders determinism roundtrip)
+    add_test(NAME materials_${group} COMMAND test_materials_contract ${group})
+    set_tests_properties(materials_${group} PROPERTIES LABELS "materials;unit" TIMEOUT 120)
+  endforeach()
+  # Tiny Cu-Au search (no MC, 1 seed, short MD), run twice for determinism.
+  add_test(NAME materials_real_search COMMAND test_materials_contract real_search)
+  set_tests_properties(materials_real_search PROPERTIES LABELS "materials;physics;slow" TIMEOUT 300)
+endif()
+# --- end forge.materials.v0 sidecar tests ---
