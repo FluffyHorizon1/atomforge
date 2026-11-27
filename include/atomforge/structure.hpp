@@ -66,6 +66,8 @@ inline Vec3 face_widths(const Mat3& cell) {
 
 // Half neighbour list (each pair once) over all periodic images within rc.
 // Brute force O(N^2 * images): fine for the cell sizes used in structure search (<~1000 atoms).
+// Positions need not be wrapped: the image range grows with how far atoms lie outside the home cell (cost grows with it, so
+// long simulations should still wrap; run_md does).
 struct NeighborList {
     struct Pair { int i, j; Vec3 shift; };   // r_ij = pos[j] + shift - pos[i]
     std::vector<Pair> pairs;
@@ -78,7 +80,25 @@ struct NeighborList {
         pairs.clear();
         const double rl = rc + skin, rl2 = rl * rl;
         const Vec3 w = face_widths(s.cell);
-        const int n0 = int(std::ceil(rl / w.x)), n1 = int(std::ceil(rl / w.y)), n2 = int(std::ceil(rl / w.z));
+        // Image range. A pair (i, j) with image shift a (in cells) has fractional separation f_j - f_i + a along each axis, and
+        // it can only lie within rl if |f_j - f_i + a| < rl / w. For atoms inside the home cell |f_j - f_i| < 1, which gives
+        // ceil(rl / w) images. Atoms outside the cell (unwrapped MD, shifted images) have a larger spread, so widen the range by
+        // the actual spread of the fractional coordinates. For positions inside one cell (spread < 1) floor(rl / w + spread)
+        // <= ceil(rl / w), so the range, the pairs found, and their order are identical to before.
+        const Mat3 inv_t = transpose(inverse(s.cell));
+        double fmin[3] = {0, 0, 0}, fmax[3] = {0, 0, 0};
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            const Vec3 f = inv_t * s.pos[i];
+            for (int k = 0; k < 3; ++k) {
+                if (i == 0 || f[k] < fmin[k]) fmin[k] = f[k];
+                if (i == 0 || f[k] > fmax[k]) fmax[k] = f[k];
+            }
+        }
+        auto nimg = [&](double width, int k) {
+            const double x = rl / width;
+            return std::max(int(std::ceil(x)), int(std::floor(x + (fmax[k] - fmin[k]))));
+        };
+        const int n0 = nimg(w.x, 0), n1 = nimg(w.y, 1), n2 = nimg(w.z, 2);
         const int N = int(s.size());
         for (int a = -n0; a <= n0; ++a) for (int b = -n1; b <= n1; ++b) for (int c = -n2; c <= n2; ++c) {
             const Vec3 shift = s.cell.row(0) * a + s.cell.row(1) * b + s.cell.row(2) * c;

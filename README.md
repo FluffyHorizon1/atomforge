@@ -67,10 +67,11 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `hull` [physics, slow] | convex hull on synthetic points with a known answer, plus a reduced Cu–Au search |
 | `validate` | `atomforge validate` (the CLI); exits 0 and prints `ground state correct for 17/17 elements`. Registered by the CI branch. |
 | `validate_unit` [unit] | pass and fail paths of the element validation logic (wrong ground state, wrong lattice constant) |
-| `unwrapped` [known-bug, xfail] | **expected to fail**: see Limitations |
+| `unwrapped` [physics, symmetry] | energy and forces unchanged when atoms are displaced by whole lattice vectors (2-7 cells, cubic and triclinic), no wrapping |
+| `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
 
-The suite takes about 4 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, the MD
-integrator, file output (`io.hpp`) or the `search`/`relax` command-line paths.
+The suite takes about 5 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, MD
+thermodynamics beyond the shift-invariance check, file output (`io.hpp`) or the `search`/`relax` command-line paths.
 
 ## Toward the quantum level
 
@@ -88,10 +89,10 @@ Oxides, nitrides and covalent solids need DFT or reactive potentials.
 The Monte Carlo search runs on 48-site cells. Dynamical stability is checked by MD heat-and-quench, not phonons.
 There is no magnetism and no charge transfer (EAM). Alloy energies are qualitative.
 
-Known bug: the neighbour list assumes atoms are in (or very close to) the home cell. Atoms displaced by two or more
-cell vectors, or by one vector in a small triclinic cell, silently lose neighbours and the energy is wrong. `relax` and
-the search keep atoms close to the cell, but `run_md` does not wrap positions, so long or hot MD runs on small cells
-can be affected. Tracked by the expected-fail `unwrapped` test.
+The neighbour list accepts atoms anywhere in space: the periodic-image range grows with how far atoms lie outside the home
+cell (earlier versions silently dropped pairs for atoms two or more cells away, or one cell away in a small triclinic cell).
+The cost of building the list grows with that distance, so long simulations should keep positions wrapped; `run_md` wraps atoms
+that drift more than one cell outside the home cell.
 
 ## Licence
 
