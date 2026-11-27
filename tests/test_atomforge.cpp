@@ -2,7 +2,7 @@
 // stability and the validate path. Same custom CHECK style as qpuforge.
 //
 //   test_atomforge            run every group
-//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit cli unwrapped
+//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit cli io unwrapped
 //   (the default run skips "unwrapped", a known-bug group registered as expected-fail in CTest)
 //   The CLI `atomforge validate` path is the CTest test named `validate` from ci/actions-ctest, not a group here.
 #include "atomforge/atomforge.hpp"
@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdexcept>
 namespace fs = std::filesystem;
 
 using namespace atomforge;
@@ -409,10 +410,32 @@ static void test_cli() {
     CHECK(st == 1, "--T 0 (not > 0): status %d", st);
 }
 
+// ---------------------------------------------------------------- io: writers must report stream errors (a02)
+static void test_io() {
+    std::puts("[io] write_poscar / write_extxyz / write_report_json throw when the path cannot be written");
+    const Structure s = proto("A1", 0, 0);
+    const std::vector<std::string> els{"Cu"};
+    const char* bad = "/nonexistent-dir-atomforge-a02/x";
+    auto expect_throw = [&](auto&& fn, const char* what) {
+        bool threw = false; std::string msg;
+        try { fn(); } catch (const std::runtime_error& e) { threw = true; msg = e.what(); }
+        CHECK(threw && msg.find("cannot write") != std::string::npos, "%s: threw=%d msg='%s'", what, threw, msg.c_str());
+    };
+    expect_throw([&]{ write_poscar(std::string(bad) + ".POSCAR", s, els); }, "write_poscar");
+    expect_throw([&]{ write_extxyz(std::string(bad) + ".xyz", s, els); }, "write_extxyz");
+    SearchResult R; R.A = "Cu"; R.B = "Au";
+    expect_throw([&]{ write_report_json(std::string(bad) + ".json", R); }, "write_report_json");
+    // a writable path still succeeds and leaves a file
+    const fs::path ok = fs::temp_directory_path() / "atomforge-a02-ok.POSCAR";
+    write_poscar(ok.string(), s, els);
+    CHECK(fs::file_size(ok) > 0, "successful POSCAR write");
+    fs::remove(ok);
+}
+
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"forces", test_forces}, {"virial", test_virial}, {"invariance", test_invariance}, {"relax", test_relax},
-                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"cli", test_cli}, {"unwrapped", test_unwrapped}};
+                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"cli", test_cli}, {"io", test_io}, {"unwrapped", test_unwrapped}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     bool ran = false;
     for (const auto& g : groups) {

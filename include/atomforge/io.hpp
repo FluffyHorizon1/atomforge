@@ -2,13 +2,23 @@
 #pragma once
 #include "search.hpp"
 #include <fstream>
+#include <stdexcept>
 #include <iomanip>
 
 namespace atomforge {
 
+inline void check_write(std::ofstream& f, const std::string& path) {
+    f.flush();
+    if (!f) throw std::runtime_error("cannot write " + path);
+    f.close();
+    if (!f) throw std::runtime_error("cannot write " + path);
+}
+
+
 // VASP POSCAR (feed straight into DFT for verification: VASP / Quantum ESPRESSO via ASE / GPAW)
 inline void write_poscar(const std::string& path, const Structure& s, const std::vector<std::string>& els) {
     std::ofstream f(path);
+    if (!f) throw std::runtime_error("cannot write " + path);
     f << s.label << "\n1.0\n" << std::fixed << std::setprecision(10);
     for (int i = 0; i < 3; ++i) f << "  " << s.cell(i, 0) << " " << s.cell(i, 1) << " " << s.cell(i, 2) << "\n";
     std::vector<int> present;
@@ -20,16 +30,19 @@ inline void write_poscar(const std::string& path, const Structure& s, const std:
     for (int e : present)
         for (std::size_t i = 0; i < s.size(); ++i)
             if (s.species[i] == e) { Vec3 fr = s.to_frac(s.pos[i]); f << "  " << fr.x << " " << fr.y << " " << fr.z << "\n"; }
+    check_write(f, path);
 }
 
 // Extended XYZ (opens in OVITO / ASE / VESTA)
 inline void write_extxyz(const std::string& path, const Structure& s, const std::vector<std::string>& els, double energy = 0) {
     std::ofstream f(path);
+    if (!f) throw std::runtime_error("cannot write " + path);
     f << s.size() << "\n" << std::fixed << std::setprecision(8) << "Lattice=\"";
     for (int i = 0; i < 9; ++i) f << s.cell.m[i] << (i < 8 ? " " : "");
     f << "\" Properties=species:S:1:pos:R:3 energy=" << energy << " pbc=\"T T T\" label=\"" << s.label << "\"\n";
     for (std::size_t i = 0; i < s.size(); ++i)
         f << els[s.species[i]] << " " << s.pos[i].x << " " << s.pos[i].y << " " << s.pos[i].z << "\n";
+    check_write(f, path);
 }
 
 inline std::string json_escape(const std::string& s) {
@@ -38,6 +51,7 @@ inline std::string json_escape(const std::string& s) {
 
 inline void write_report_json(const std::string& path, const SearchResult& R) {
     std::ofstream f(path);
+    if (!f) throw std::runtime_error("cannot write " + path);
     f << std::setprecision(6) << "{\n  \"system\": [\"" << R.A << "\", \"" << R.B << "\"],\n"
       << "  \"potential\": \"" << R.potential << "\",\n"
       << "  \"reference\": {\"" << R.A << "\": {\"phase\": \"" << json_escape(R.refA) << "\", \"mu\": " << R.muA << "}, \""
@@ -60,6 +74,7 @@ inline void write_report_json(const std::string& path, const SearchResult& R) {
         f << "}" << (k + 1 < R.candidates.size() ? "," : "") << "\n";
     }
     f << "  ]\n}\n";
+    check_write(f, path);
 }
 
 } // namespace atomforge
