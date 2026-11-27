@@ -43,3 +43,140 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --output-on-failure --timeout 1200
+
+  # Same build as above with -Werror, so a new compiler warning fails CI.
+  werror:
+    name: werror (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang
+          else
+            sudo apt-get install -y g++
+          fi
+
+      - name: Configure (-Werror)
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            export CXX=clang++
+          else
+            export CXX=g++
+          fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DATOMFORGE_NATIVE=OFF \
+            -DCMAKE_CXX_FLAGS="-Werror"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --timeout 1200
+
+  # AddressSanitizer + UndefinedBehaviorSanitizer. UBSan findings abort the test
+  # (-fno-sanitize-recover) and ASan/LeakSanitizer fail the process, so ctest fails.
+  sanitizers:
+    name: asan+ubsan (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    env:
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            sudo apt-get install -y clang
+          else
+            sudo apt-get install -y g++
+          fi
+
+      # Newer kernels on hosted runners use high-entropy ASLR that older sanitizer
+      # runtimes cannot map around; lowering it is the standard workaround.
+      - name: Lower ASLR entropy for ASan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - name: Configure (ASan + UBSan)
+        run: |
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            export CXX=clang++
+          else
+            export CXX=g++
+          fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DATOMFORGE_NATIVE=OFF \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --timeout 1200
+
+  # gcov/lcov line, function and branch coverage of the headers and CLI,
+  # uploaded as an HTML report artifact. Report only; no threshold gate.
+  coverage:
+    name: coverage (gcc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ lcov
+
+      - name: Configure (--coverage)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=g++ \
+            -DATOMFORGE_NATIVE=OFF \
+            -DCMAKE_CXX_FLAGS="--coverage -fprofile-update=atomic"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --timeout 1200
+
+      - name: Collect coverage
+        run: |
+          lcov --capture --directory build --output-file build/coverage.info \
+            --rc branch_coverage=1 \
+            --ignore-errors mismatch,negative,inconsistent,unsupported \
+            --include "$GITHUB_WORKSPACE/include/*" --include "$GITHUB_WORKSPACE/src/*"
+          genhtml build/coverage.info --output-directory build/coverage-html \
+            --rc branch_coverage=1 --ignore-errors inconsistent,unsupported
+          lcov --summary build/coverage.info --rc branch_coverage=1 \
+            --ignore-errors inconsistent,unsupported | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomforge-coverage-html
+          path: build/coverage-html
+          if-no-files-found: error
