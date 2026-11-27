@@ -21,7 +21,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binaries are portable);
 `-DATOMFORGE_BUILD_TESTS=OFF` skips the `tests/` suite (the CLI `validate` CTest entry is always registered). Tests run with `ctest --test-dir build --output-on-failure`
-(about 4 s, see [Testing](#testing)).
+(57 s for all 26 entries on the 4-core cloud box used for this README, 13 s for `ctest -LE slow`; see [Testing](#testing)).
 
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
@@ -190,8 +190,10 @@ dynamically stable when no mode is below −0.1 THz on that grid. `atomforge rel
 | fcc Cu, acoustic modes at Γ | 1e-7 THz | 0 |
 | bcc Cu | imaginary, −1.12 THz at N | (bcc Cu is not stable) |
 
-The longitudinal modes come out 15% stiff with this potential; the transverse X mode is within 0.2%. The 6×6×6 and
-8×8×8 supercells give the same frequencies to 1e-3 THz. For the native Lennard-Jones fcc lattice, the finite-displacement
+The longitudinal modes come out 15% stiff with this potential (16% for the highest mode); the transverse X mode is within
+0.2%. That is the Zhou04 potential's stiffness, not a supercell effect: the 6×6×6 and 8×8×8 supercells give the same
+frequencies to 1e-3 THz (8.3883 THz for the highest mode in both). The `phonons` test therefore allows 20% for the
+longitudinal X mode and the highest frequency, and 5% for the transverse X mode. For the native Lennard-Jones fcc lattice, the finite-displacement
 frequencies agree with the analytic lattice-sum dispersion to 2e-4 THz, and the force constants through the `lj` worker
 are identical to the native ones. The cost is 6 evaluations per atom of the cell, on the supercell, which is small for EAM
 but dominant for DFT.

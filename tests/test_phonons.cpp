@@ -43,7 +43,9 @@ static void test_phonons() {
     CHECK(P.gamma_acoustic_THz < 1e-3, "acoustic modes at Gamma %.3e THz, expected 0 (sum rule)", P.gamma_acoustic_THz);
     CHECK(std::abs(fX[0] - fX[1]) < 1e-6, "X-point transverse modes not degenerate (%.6f %.6f)", fX[0], fX[1]);
     CHECK(std::abs(fX[0] / kCuXT - 1) < 0.05, "X transverse %.3f THz vs experiment %.2f", fX[0], kCuXT);
-    // The Zhou04 EAM is stiffer than experiment for longitudinal modes: L(X) = 8.34 THz, 15 % above 7.25 THz.
+    // The Zhou04 EAM is stiffer than experiment for longitudinal modes: L(X) = 8.34 THz, 15 % above 7.25 THz (Svensson et al.
+    // 1967), and the highest mode 8.39 THz (+16 %). It is the potential, not the supercell (6x6x6 and 8x8x8 agree, checked
+    // below), hence 20 % here against 5 % for the transverse mode.
     CHECK(std::abs(fX[2] / kCuXL - 1) < 0.20, "X longitudinal %.3f THz vs experiment %.2f", fX[2], kCuXL);
     CHECK(std::abs(P.max_THz / kCuXL - 1) < 0.20, "max frequency %.3f THz vs experiment %.2f", P.max_THz, kCuXL);
     // A larger supercell changes nothing at commensurate points (force constants are converged).
