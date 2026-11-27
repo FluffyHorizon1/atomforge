@@ -69,6 +69,9 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `validate_unit` [unit] | pass and fail paths of the element validation logic (wrong ground state, wrong lattice constant) |
 | `unwrapped` [physics, symmetry] | energy and forces unchanged when atoms are displaced by whole lattice vectors (2-7 cells, cubic and triclinic), no wrapping |
 | `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
+| `structure_misc` [unit] | composition, fraction and supercell bookkeeping; errors for unknown elements, prototypes and parent lattices |
+| `io` [unit] | POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
+| `cli` [cli, slow] | the `atomforge` executable: usage and error exit codes, `elements`, `relax` (stable and Born-unstable cases), and a reduced `search` whose `report.json` and structure files are cross-checked. Runs as `test_atomforge cli <path-to-atomforge>`; skipped without the path |
 
 The suite takes about 5 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, MD
 thermodynamics beyond the shift-invariance check, file output (`io.hpp`) or the `search`/`relax` command-line paths.
