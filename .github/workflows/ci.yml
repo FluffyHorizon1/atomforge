@@ -18,12 +18,24 @@ jobs:
 
       - name: Install toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+          # The ubuntu-24.04 image ships a packages.microsoft.com source that
+          # intermittently returns 403 and fails apt-get update (see a03).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list \
+            /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update; then ok=1; break; fi
+            echo "apt-get update failed (attempt $attempt); retrying..."
+            sleep $((attempt * 4))
+          done
+          if [ "$ok" != 1 ]; then echo "apt-get update failed after retries" >&2; exit 100; fi
+          sudo apt-get -o Acquire::Retries=5 install -y cmake ninja-build
           if [ "${{ matrix.compiler }}" = "clang" ]; then
-            sudo apt-get install -y clang
+            sudo apt-get -o Acquire::Retries=5 install -y clang
           else
-            sudo apt-get install -y g++
+            sudo apt-get -o Acquire::Retries=5 install -y g++
           fi
 
       - name: Configure
@@ -58,12 +70,24 @@ jobs:
 
       - name: Install toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+          # The ubuntu-24.04 image ships a packages.microsoft.com source that
+          # intermittently returns 403 and fails apt-get update (see a03).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list \
+            /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update; then ok=1; break; fi
+            echo "apt-get update failed (attempt $attempt); retrying..."
+            sleep $((attempt * 4))
+          done
+          if [ "$ok" != 1 ]; then echo "apt-get update failed after retries" >&2; exit 100; fi
+          sudo apt-get -o Acquire::Retries=5 install -y cmake ninja-build
           if [ "${{ matrix.compiler }}" = "clang" ]; then
-            sudo apt-get install -y clang
+            sudo apt-get -o Acquire::Retries=5 install -y clang
           else
-            sudo apt-get install -y g++
+            sudo apt-get -o Acquire::Retries=5 install -y g++
           fi
 
       - name: Configure (-Werror)
@@ -103,12 +127,24 @@ jobs:
 
       - name: Install toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build
+          # The ubuntu-24.04 image ships a packages.microsoft.com source that
+          # intermittently returns 403 and fails apt-get update (see a03).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list \
+            /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update; then ok=1; break; fi
+            echo "apt-get update failed (attempt $attempt); retrying..."
+            sleep $((attempt * 4))
+          done
+          if [ "$ok" != 1 ]; then echo "apt-get update failed after retries" >&2; exit 100; fi
+          sudo apt-get -o Acquire::Retries=5 install -y cmake ninja-build
           if [ "${{ matrix.compiler }}" = "clang" ]; then
-            sudo apt-get install -y clang
+            sudo apt-get -o Acquire::Retries=5 install -y clang
           else
-            sudo apt-get install -y g++
+            sudo apt-get -o Acquire::Retries=5 install -y g++
           fi
 
       # Newer kernels on hosted runners use high-entropy ASLR that older sanitizer
@@ -146,8 +182,20 @@ jobs:
 
       - name: Install toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build g++ lcov
+          # The ubuntu-24.04 image ships a packages.microsoft.com source that
+          # intermittently returns 403 and fails apt-get update (see a03).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list \
+            /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update; then ok=1; break; fi
+            echo "apt-get update failed (attempt $attempt); retrying..."
+            sleep $((attempt * 4))
+          done
+          if [ "$ok" != 1 ]; then echo "apt-get update failed after retries" >&2; exit 100; fi
+          sudo apt-get -o Acquire::Retries=5 install -y cmake ninja-build g++ lcov
 
       - name: Configure (--coverage)
         run: |
