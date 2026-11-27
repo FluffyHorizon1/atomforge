@@ -8,3 +8,4 @@
 #include "analysis.hpp"
 #include "search.hpp"
 #include "io.hpp"
+#include "validate.hpp"
