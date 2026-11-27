@@ -1,0 +1,121 @@
+{
+  "schema": "forge.materials.v0",
+  "produced_by": {
+    "tool": "atomforge",
+    "commit": "b4d2b531c1381662dcec0409ce39f8206b8c1860",
+    "potential_or_method": "Zhou04-EAM",
+    "timestamp": "2026-11-27T23:47:38+00:00"
+  },
+  "system": ["Cu", "Au"],
+  "structures_ref": {
+    "report": "report.json",
+    "format_notes": "POSCAR in Å, extxyz energy in eV (total), report energies in eV/atom"
+  },
+  "quantities": {
+    "Q_dielectric": {
+      "value": null,
+      "unit": "dimensionless",
+      "maps_to": "ChipDesign.materials.Q_dielectric",
+      "status": "placeholder",
+      "provenance": "placeholder",
+      "reason": "atomforge computes structures and energies with an analytic EAM potential; it has no dielectric-loss model, and EAM cannot represent O, N or Si. Do not use this value.",
+      "conditions": {"T_K": null, "f_GHz": null},
+      "qpuforge_default_for_reference": 3000000
+    },
+    "loss_tangent": {
+      "value": null,
+      "unit": "dimensionless",
+      "maps_to": null,
+      "status": "placeholder",
+      "provenance": "placeholder",
+      "reason": "atomforge computes structures and energies with an analytic EAM potential; it has no dielectric-loss model, and EAM cannot represent O, N or Si. Do not use this value.",
+      "relation": "If the uniform-loss model in device.hpp holds, Q_dielectric = 1 / loss_tangent.",
+      "qpuforge_default_for_reference": null
+    },
+    "junction_gap_ueV": {
+      "value": null,
+      "unit": "ueV",
+      "maps_to": "ChipDesign.materials.junction_gap_ueV",
+      "status": "placeholder",
+      "provenance": "placeholder",
+      "reason": "The superconducting gap is not a ground-state total-energy quantity and atomforge does not compute it. Reserved in forge.materials.v0.",
+      "qpuforge_default_for_reference": 180
+    }
+  },
+  "placeholders": ["quantities.Q_dielectric", "quantities.loss_tangent", "quantities.junction_gap_ueV"],
+  "contains_placeholders": true,
+  "atomforge_computed": {
+    "status": "computed",
+    "method": "Zhou04-EAM",
+    "fidelity": "classical-eam",
+    "units": {"energy": "eV/atom", "volume": "A^3/atom", "length": "A", "angle": "deg", "elastic": "GPa"},
+    "caveat": "Classical EAM results, not DFT. Not a QPU-stack dielectric calculation and not valid as DFT input without verification (see results/NiAl for an EAM failure case).",
+    "references": {
+      "Cu": {"phase": "Cu A1 (fcc)", "mu_eV_per_atom": -3.539994906, "vol_per_atom_A3": 11.80891181, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [3.614847304, 3.614847304, 3.614847304],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }},
+      "Au": {"phase": "Au A1 (fcc)", "mu_eV_per_atom": -3.93000502, "vol_per_atom_A3": 16.97921848, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [4.079991228, 4.079991228, 4.079991228],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }}
+    },
+    "hull_phases": [
+      {"id": 0, "x": 0, "ef_eV_per_atom": 0, "label": "A1 (fcc) Cu", "source": "element", "e_per_atom_eV": -3.539994906, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 11.80891181, "relax_converged": true, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [3.614847304, 3.614847304, 3.614847304],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }},
+      {"id": 50, "x": 0.125, "ef_eV_per_atom": -0.04848692467, "label": "MC-bcc Cu7Au", "source": "mc-ordering", "e_per_atom_eV": -3.637233095, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 12.57641862, "relax_converged": true, "structure": {
+        "natoms": 48,
+        "cell_lengths_A": [6.22256548, 7.798758274, 12.45125526],
+        "cell_angles_deg": [89.98950245, 92.48772383, 89.92826332],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }, "elastic_GPa": {"C11": 156.1077867, "C12": 91.8737378, "C44": 20.85048713, "bulk_voigt": 117.9419174, "shear_voigt": 31.18073478, "min_C_eig": 19.95872947, "born_stable": true}, "verdict": "STABLE (on hull, mechanically + thermally stable)"},
+      {"id": 6, "x": 0.25, "ef_eV_per_atom": -0.09327744635, "label": "L1_2 Cu3Au", "source": "prototype", "e_per_atom_eV": -3.730774881, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 13.18391514, "relax_converged": true, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [3.750030473, 3.750030473, 3.750030473],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }, "elastic_GPa": {"C11": 114.9040962, "C12": 98.59279635, "C44": 46.33204732, "bulk_voigt": 104.0298963, "shear_voigt": 31.06148835, "min_C_eig": 16.3112998, "born_stable": true}, "verdict": "STABLE (on hull, mechanically + thermally stable)"},
+      {"id": 8, "x": 0.5, "ef_eV_per_atom": -0.1330991316, "label": "L1_0 CuAu", "source": "prototype", "e_per_atom_eV": -3.868099095, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 14.42503435, "relax_converged": true, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [3.942785759, 3.942785759, 3.711679675],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }, "elastic_GPa": {"C11": 172.2701589, "C12": 114.76914, "C44": 60.41011805, "bulk_voigt": 128.6275532, "shear_voigt": 41.679116, "min_C_eig": 17.34184423, "born_stable": true}, "verdict": "STABLE (on hull, mechanically + thermally stable)"},
+      {"id": 47, "x": 0.6666666667, "ef_eV_per_atom": -0.1083820029, "label": "MC-fcc CuAu2", "source": "mc-ordering", "e_per_atom_eV": -3.908383652, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 15.33723464, "relax_converged": true, "structure": {
+        "natoms": 48,
+        "cell_lengths_A": [7.876393693, 7.926920716, 11.79115556],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }, "elastic_GPa": {"C11": 176.7715261, "C12": 140.507866, "C44": 56.12350924, "bulk_voigt": 152.5375781, "shear_voigt": 41.77423207, "min_C_eig": 37.80633446, "born_stable": true}, "verdict": "STABLE (on hull, mechanically + thermally stable)"},
+      {"id": 7, "x": 0.75, "ef_eV_per_atom": -0.09505590513, "label": "L1_2 CuAu3", "source": "prototype", "e_per_atom_eV": -3.927558397, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 15.71051199, "relax_converged": true, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [3.975729027, 3.975729027, 3.975729027],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }, "elastic_GPa": {"C11": 186.4012547, "C12": 143.4159408, "C44": 55.80987477, "bulk_voigt": 157.7443787, "shear_voigt": 42.08298764, "min_C_eig": 42.98531389, "born_stable": true}, "verdict": "STABLE (on hull, mechanically + thermally stable)"},
+      {"id": 3, "x": 1, "ef_eV_per_atom": 0, "label": "A1 (fcc) Au", "source": "element", "e_per_atom_eV": -3.93000502, "e_hull_eV_per_atom": 0, "vol_per_atom_A3": 16.97921848, "relax_converged": true, "structure": {
+        "natoms": 4,
+        "cell_lengths_A": [4.079991228, 4.079991228, 4.079991228],
+        "cell_angles_deg": [90, 90, 90],
+        "note": "Edges and angles of the stored (relaxed) cell. For prototypes and Monte Carlo supercells this is the simulation cell, not a primitive cell."
+      }}
+    ]
+  },
+  "not_in_contract": {
+    "Rn_spread_pct": "Process spread used by fab_monte_carlo(); not an atomistic output.",
+    "environment": "T_eff_mK, flux_noise_uPhi0, charge_noise_e, Tphi_other_us stay in chip JSON."
+  },
+  "open_stack": [],
+  "notes": [
+    "Written by atomforge's forge.materials.v0 writer. Quantities listed in `placeholders` are NOT computed (value is null); copy nothing from them into a chip JSON.",
+    "`atomforge_computed` is an additive optional block (the contract allows additive optional fields on v0); qpuforge does not read it."
+  ]
+}
