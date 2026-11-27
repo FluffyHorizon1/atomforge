@@ -325,8 +325,8 @@ private:
         std::string q = "{\"op\":\"hello\",\"protocol\":" + std::to_string(external_protocol_version) + ",\"elements\":[";
         for (std::size_t i = 0; i < names_.size(); ++i) q += (i ? "," : "") + json::quote(names_[i]);
         q += "]}\n";
+        const json::Value r = request(q, opt_.hello_timeout_s, "hello");   // transport errors already carry the log tail
         try {
-            const json::Value r = request(q, opt_.hello_timeout_s, "hello");
             if (const json::Value* e = r.get("error")) throw ExternalPotentialError("worker refused the handshake: " + (e->is_string() ? e->str : std::string("?")));
             const double pv = number(r, "protocol");
             if (pv != external_protocol_version)

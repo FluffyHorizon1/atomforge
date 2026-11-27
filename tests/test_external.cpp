@@ -2,6 +2,7 @@
 // quantum/worker.py lj), FIRE relaxation through the bridge, and the bridge's failure paths.
 //
 //   test_external <group>    groups: lj external external_relax external_errors
+//   test_external external_cli <path-to-atomforge>   `atomforge relax --potential external:...` end to end
 //
 // Groups that need python3 exit with status 77 (CTest SKIP_RETURN_CODE) when it is not on PATH.
 #include "atomforge/atomforge.hpp"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <sys/wait.h>
 
 #ifndef ATOMFORGE_SOURCE_DIR
 #define ATOMFORGE_SOURCE_DIR "."
@@ -258,10 +260,47 @@ static void test_external_errors() {
     CHECK(threw, "trailing comma must be rejected");
 }
 
+// ---------------------------------------------------------------- the CLI path
+static std::string g_cli;
+static int run(const std::string& cmd, std::string& out) {
+    out.clear();
+    FILE* fp = popen((cmd + " 2>&1").c_str(), "r");
+    if (!fp) return 127;
+    char buf[512];
+    while (std::fgets(buf, sizeof buf, fp)) out += buf;
+    const int st = pclose(fp);
+    return WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+}
+static double field(const std::string& out, const char* key) {
+    const auto k = out.find(key);
+    return k == std::string::npos ? std::nan("") : std::atof(out.c_str() + k + std::strlen(key));
+}
+static void test_external_cli() {
+    std::puts("[external_cli] atomforge relax --potential external:\"python3 quantum/worker.py lj\" matches --potential lj");
+    if (g_cli.empty()) { std::puts("  SKIP: no atomforge path given"); g_skip = true; return; }
+    if (!have_python()) return;
+    std::string a, b, c;
+    const std::string base = "/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --volume 40 --no-elastic";
+    const int sa = run(base + " --potential lj", a);
+    const int sb = run(base + " --potential \"external:" + lj_command() + "\" --worker-log '" + log_path("cli") + "'", b);
+    std::printf("%s%s", a.c_str(), b.c_str());
+    CHECK(sa == 0 && sb == 0, "exit status %d / %d", sa, sb);
+    CHECK(b.find("potential: external:lj(") != std::string::npos && b.find("worker evaluations") != std::string::npos, "external run output");
+    const double ea = field(a, "E = "), eb = field(b, "E = "), va = field(a, "V = "), vb = field(b, "V = ");
+    CHECK(std::abs(ea - eb) < 1e-12 && std::abs(va - vb) < 1e-12 && ea < -0.07, "E %.6f vs %.6f, V %.4f vs %.4f", ea, eb, va, vb);
+    int sc = run(base + " --potential external:/nonexistent/worker", c);
+    CHECK(sc == 2 && c.find("error:") != std::string::npos && c.find("exit status 127") != std::string::npos, "missing worker: status %d '%s'", sc, c.c_str());
+    sc = run(base + " --potential bogus", c);
+    CHECK(sc == 2 && c.find("unknown --potential") != std::string::npos, "bogus spec: status %d", sc);
+    sc = run("/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --potential lj", c);
+    CHECK(sc == 2 && c.find("--volume") != std::string::npos, "element without a reference volume: status %d", sc);
+}
+
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
-    const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}};
+    const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}, {"external_cli", test_external_cli}};
     const char* want = argc > 1 ? argv[1] : nullptr;
+    if (argc > 2) g_cli = argv[2];
     bool ran = false;
     for (const auto& g : groups) {
         if (want && std::strcmp(want, g.name)) continue;
