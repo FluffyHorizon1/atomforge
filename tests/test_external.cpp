@@ -16,6 +16,7 @@
 #include <random>
 #include <string>
 #include <sys/wait.h>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -356,6 +357,26 @@ static void test_external_cli() {
     CHECK(sc == 2 && c.find("unknown --potential") != std::string::npos, "bogus spec: status %d", sc);
     sc = run("/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --potential lj", c);
     CHECK(sc == 2 && c.find("--volume") != std::string::npos, "element without a reference volume: status %d", sc);
+
+    // search end to end through the worker (reduced: one prototype, no solid solutions or MC, Gamma-only phonons)
+    const std::string dir = log_path("cli_search") + ".d";
+    sc = run("/usr/bin/timeout 120s '" + g_cli + "' search Ar Kr --potential \"external:" + lj_command() + "\" --volume 38,38"
+             " --prototypes L1_2 --no-ss --no-mc --md-steps 20 --phonon-supercell 1 --out '" + dir + "'", c);
+    std::ifstream rf(dir + "/report.json");
+    std::stringstream rs; rs << rf.rdbuf();
+    const std::string rep = rs.str();
+    std::printf("  search: status %d, report %zu bytes\n", sc, rep.size());
+    CHECK(sc == 0 && c.find("worker evaluations") != std::string::npos && c.find("dynamically stable") != std::string::npos, "search via the worker: status %d\n%s", sc, c.c_str());
+    CHECK(rep.find("\"potential\": \"external:lj(") != std::string::npos, "report.json does not name the external backend");
+    CHECK(rep.find("\"phonons\": {") != std::string::npos && rep.find("L1_2 Ar3Kr") != std::string::npos, "report.json lacks the screened L1_2 candidate with phonons");
+    bool ok = true;
+    try { (void)json::parse(rep); } catch (const std::exception&) { ok = false; }
+    CHECK(ok, "report.json is not valid JSON");
+    std::filesystem::remove_all(dir);
+    sc = run("'" + g_cli + "' search Ar Kr --potential lj", c);
+    CHECK(sc == 2 && c.find("volume_per_atom") != std::string::npos, "search outside the Zhou04 table without --volume: status %d", sc);
+    sc = run("'" + g_cli + "' search Cu Au --volume 12", c);
+    CHECK(sc == 1 && c.find("--volume expects VA,VB") != std::string::npos, "bad --volume: status %d", sc);
 }
 
 int main(int argc, char** argv) {

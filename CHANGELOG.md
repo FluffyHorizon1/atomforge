@@ -12,4 +12,11 @@
 - `LennardJones` (`include/atomforge/lj.hpp`): native truncated-and-shifted Lennard-Jones, used to cross-check the bridge.
 - `atomforge relax`: `--potential eam|lj[:eps,sigma,rc]|external:CMD`, `--volume`, `--cell`, `--fmax`,
   `--elastic`/`--no-elastic`, `--worker-timeout`, `--worker-log`. The default EAM output is unchanged.
+- `atomforge search --potential eam|lj[:...]|external:CMD` and `binary_search(A, B, pot, opt)`: the whole search through
+  any `Potential`. Also `--volume VA,VB`, `--prototypes`, `--no-ss`, `--no-mc`, and `SearchOptions::volume_per_atom`,
+  `prototypes`, `ss_parents`, `ss_fractions`, `phonons`. `ExternalPotential` refuses concurrent `evaluate()` calls.
+- Finite-displacement phonons (`include/atomforge/phonons.hpp`): force constants, acoustic sum rule, dynamical matrix,
+  dynamical stability on the commensurate q grid. `relax --phonons`, `search --phonons` (verdict
+  `UNSTABLE (imaginary phonons)`), and an additive `screen.phonons` block in `report.json`.
+- CTest groups `external_search`, `phonons` and `phonons_lj`.
 - CTest groups `lj`, `external`, `external_relax`, `external_errors` and `external_cli` (`tests/test_external.cpp`).
