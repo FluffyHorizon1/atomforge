@@ -54,10 +54,17 @@ if(ATOMFORGE_BUILD_TESTS)
   atomforge_add_group(born          physics)
   atomforge_add_group(hull          physics slow)
   atomforge_add_group(validate_unit unit)
-  atomforge_add_group(cli            unit)
   atomforge_add_group(io             unit)
 
   # Regression tests for the NeighborList fix: atoms displaced by whole lattice vectors, and MD invariance under such shifts.
   atomforge_add_group(unwrapped     physics symmetry)
   atomforge_add_group(md_invariance physics symmetry)
+
+  # Coverage groups: bookkeeping and error paths, file writers (POSCAR / extxyz / report.json), and the CLI itself.
+  # `io` (registered above) now also runs the writer round trips.
+  atomforge_add_group(structure_misc unit)
+  # The cli group (a01 argument checks + the coverage checks) drives the real executable and runs a reduced `search`,
+  # so it needs the path as a second argument.
+  add_test(NAME cli COMMAND test_atomforge cli $<TARGET_FILE:atomforge_cli>)
+  set_tests_properties(cli PROPERTIES LABELS "unit cli slow" TIMEOUT 600)
 endif()
