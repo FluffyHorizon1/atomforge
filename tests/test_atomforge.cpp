@@ -2,17 +2,24 @@
 // stability and the validate path. Same custom CHECK style as qpuforge.
 //
 //   test_atomforge            run every group
-//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit cli io unwrapped md_invariance
+//   test_atomforge <group>    run one group: forces virial invariance relax hull born validate_unit unwrapped md_invariance
+//                             structure_misc io cli
+//   (`io` = writer error paths (a02) + writer round trips; `cli` = argument validation (a01) + the executable end to end)
+//   test_atomforge cli <path-to-atomforge-cli>   the `cli` group drives the real executable (POSIX popen); it is skipped
+//                             when run without a path, and CTest passes $<TARGET_FILE:atomforge_cli>.
 //   The CLI `atomforge validate` path is the CTest test named `validate` from ci/actions-ctest, not a group here.
 #include "atomforge/atomforge.hpp"
 #include <chrono>
 #include <cstdio>
+#include <cctype>
 #include <cstring>
-#include <random>
 #include <filesystem>
-#include <unistd.h>
-#include <sys/wait.h>
+#include <fstream>
+#include <random>
+#include <sstream>
 #include <stdexcept>
+#include <sys/wait.h>
+#include <unistd.h>
 namespace fs = std::filesystem;
 
 using namespace atomforge;
@@ -411,7 +418,6 @@ static void test_validate_unit() {
     for (const auto& r : reference_elements()) CHECK(ZhouEAM::lookup(r.el) != nullptr, "%s has no Zhou04 parameters", r.el);
 }
 
-
 // ---------------------------------------------------------------- cli: unknown / invalid search arguments must fail fast (a01)
 static std::string atomforge_exe() {
     char buf[4096];
@@ -436,7 +442,7 @@ static int run_cli(const std::string& args, std::string& out, int timeout_s = 3)
     if (WIFEXITED(st)) return WEXITSTATUS(st);
     return 128;
 }
-static void test_cli() {
+static void test_cli_args() {
     std::puts("[cli] unknown, missing, non-numeric and out-of-range search arguments exit non-zero without starting a search");
     std::string out;
     int st = run_cli("", out);
@@ -461,7 +467,7 @@ static void test_cli() {
 }
 
 // ---------------------------------------------------------------- io: writers must report stream errors (a02)
-static void test_io() {
+static void test_io_errors() {
     std::puts("[io] write_poscar / write_extxyz / write_report_json throw when the path cannot be written");
     const Structure s = proto("A1", 0, 0);
     const std::vector<std::string> els{"Cu"};
@@ -482,10 +488,353 @@ static void test_io() {
     fs::remove(ok);
 }
 
+// ---------------------------------------------------------------- test-side helpers for io / cli
+static fs::path scratch_dir(const char* tag) {
+    const fs::path d = fs::temp_directory_path() / ("atomforge_test_" + std::string(tag) + "_" + std::to_string(::getpid()));
+    fs::remove_all(d);
+    fs::create_directories(d);
+    return d;
+}
+static std::vector<std::string> read_lines(const fs::path& p) {
+    std::ifstream f(p);
+    std::vector<std::string> L; std::string l;
+    while (std::getline(f, l)) L.push_back(l);
+    return L;
+}
+static std::vector<double> numbers(const std::string& line) {
+    std::istringstream in(line); std::vector<double> v; double x;
+    while (in >> x) v.push_back(x);
+    return v;
+}
+
+// Minimal strict JSON parser (RFC 8259 subset: no surrogate pairs) so the writers' output is checked as JSON, not as text.
+struct Json {
+    enum Type { Null, Bool, Num, Str, Arr, Obj } t{Null};
+    double num{0}; std::string str; std::vector<Json> arr; std::vector<std::pair<std::string, Json>> obj;
+    const Json* get(const std::string& k) const { for (const auto& kv : obj) if (kv.first == k) return &kv.second; return nullptr; }
+};
+struct JsonParser {
+    const std::string& s; std::size_t i{0}; bool ok{true};
+    explicit JsonParser(const std::string& text) : s(text) {}
+    void ws() { while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\t' || s[i] == '\r')) ++i; }
+    bool lit(const char* w) { const std::size_t n = std::strlen(w); if (s.compare(i, n, w) == 0) { i += n; return true; } return false; }
+    Json value() {
+        Json j; ws();
+        if (i >= s.size()) { ok = false; return j; }
+        const char c = s[i];
+        if (c == '{') {
+            ++i; j.t = Json::Obj; ws();
+            if (i < s.size() && s[i] == '}') { ++i; return j; }
+            while (ok) {
+                ws(); Json k = value(); if (!ok || k.t != Json::Str) { ok = false; break; }
+                ws(); if (i >= s.size() || s[i] != ':') { ok = false; break; } ++i;
+                j.obj.emplace_back(k.str, value()); ws();
+                if (i < s.size() && s[i] == ',') { ++i; continue; }
+                if (i < s.size() && s[i] == '}') { ++i; break; }
+                ok = false;
+            }
+        } else if (c == '[') {
+            ++i; j.t = Json::Arr; ws();
+            if (i < s.size() && s[i] == ']') { ++i; return j; }
+            while (ok) {
+                j.arr.push_back(value()); ws();
+                if (i < s.size() && s[i] == ',') { ++i; continue; }
+                if (i < s.size() && s[i] == ']') { ++i; break; }
+                ok = false;
+            }
+        } else if (c == '"') {
+            ++i; j.t = Json::Str;
+            while (i < s.size() && s[i] != '"') {
+                if (s[i] == '\\') {
+                    if (++i >= s.size()) break;
+                    const char e = s[i];
+                    if (e == 'n') j.str += '\n'; else if (e == 't') j.str += '\t'; else if (e == '"' || e == '\\' || e == '/') j.str += e; else { ok = false; return j; }
+                } else if (static_cast<unsigned char>(s[i]) < 0x20) { ok = false; return j; }   // raw control character
+                else j.str += s[i];
+                ++i;
+            }
+            if (i >= s.size()) ok = false; else ++i;
+        } else if (lit("true")) { j.t = Json::Bool; j.num = 1; }
+        else if (lit("false")) { j.t = Json::Bool; }
+        else if (lit("null")) { j.t = Json::Null; }
+        else {
+            const std::size_t st = i;
+            if (i < s.size() && s[i] == '-') ++i;
+            while (i < s.size() && (std::isdigit(static_cast<unsigned char>(s[i])) || s[i] == '.' || s[i] == 'e' || s[i] == 'E' || s[i] == '+' || s[i] == '-')) ++i;
+            if (st == i || !std::isdigit(static_cast<unsigned char>(s[s[st] == '-' ? st + 1 : st]))) { ok = false; return j; }
+            j.t = Json::Num; j.num = std::strtod(s.substr(st, i - st).c_str(), nullptr);
+        }
+        return j;
+    }
+    // whole-document parse: value followed by nothing
+    static bool parse(const std::string& text, Json& out) { JsonParser p(text); out = p.value(); p.ws(); return p.ok && p.i == text.size(); }
+};
+static std::string slurp(const fs::path& p) { std::ifstream f(p); std::stringstream b; b << f.rdbuf(); return b.str(); }
+
+static void test_json_helper_selfcheck() {
+    // the validator must reject what it claims to reject, otherwise the io checks below prove nothing
+    Json j;
+    CHECK(JsonParser::parse("{\"a\": [1, 2.5e-3, true, null, \"x\\\"y\"]}", j) && j.get("a") && j.get("a")->arr.size() == 5, "valid JSON rejected");
+    CHECK(!JsonParser::parse("{\"a\": nan}", j), "nan accepted as JSON");
+    CHECK(!JsonParser::parse("{\"a\": inf}", j), "inf accepted as JSON");
+    CHECK(!JsonParser::parse("{\"a\": 1,}", j), "trailing comma accepted");
+    CHECK(!JsonParser::parse("{\"a\": \"un\"escaped\"}", j), "unescaped quote accepted");
+    CHECK(!JsonParser::parse("{\"a\": 1} x", j), "trailing garbage accepted");
+}
+
+static void test_structure_misc() {
+    std::puts("[structure_misc] composition/fraction/supercell bookkeeping; error paths for unknown elements, prototypes and parents");
+    const Structure l12 = proto("L1_2", 0, 1);   // 3 A + 1 B per cell
+    const auto comp = l12.composition();
+    CHECK(l12.size() == 4 && comp.at(0) == 3 && comp.at(1) == 1, "L1_2 composition %d/%d", comp.count(0) ? comp.at(0) : -1, comp.count(1) ? comp.at(1) : -1);
+    CHECK(std::abs(l12.fraction(1) - 0.25) < 1e-15 && std::abs(l12.fraction(0) - 0.75) < 1e-15 && l12.fraction(7) == 0.0, "L1_2 fractions");
+    Structure empty;
+    CHECK(empty.size() == 0 && empty.fraction(0) == 0.0 && empty.composition().empty(), "empty structure: fraction must be 0, not NaN");
+    const Structure sc = l12.supercell(2, 3, 4);
+    const auto cc = sc.composition();
+    CHECK(sc.size() == 24 * l12.size() && cc.at(0) == 72 && cc.at(1) == 24, "supercell atom counts (%zu)", sc.size());
+    CHECK(std::abs(sc.volume() - 24 * l12.volume()) < 1e-9 * sc.volume(), "supercell volume %.6f vs %.6f", sc.volume(), 24 * l12.volume());
+    CHECK(std::abs(sc.fraction(1) - l12.fraction(1)) < 1e-15, "supercell keeps composition");
+    // every supercell position equals a cell position plus a lattice translation of the small cell
+    int bad = 0;
+    for (std::size_t k = 0; k < sc.size(); ++k) {
+        const Vec3 f = l12.to_frac(sc.pos[k]);
+        const std::size_t base = k % l12.size();
+        const Vec3 d = f - l12.to_frac(l12.pos[base]);
+        if (std::abs(d.x - std::round(d.x)) > 1e-9 || std::abs(d.y - std::round(d.y)) > 1e-9 || std::abs(d.z - std::round(d.z)) > 1e-9 || sc.species[k] != l12.species[base]) ++bad;
+    }
+    CHECK(bad == 0, "%d supercell sites are not lattice translates of the unit cell", bad);
+
+    bool threw = false; std::string msg;
+    try { ZhouEAM bad_el({"Cu", "Xx"}); } catch (const std::runtime_error& e) { threw = true; msg = e.what(); }
+    CHECK(threw && msg.find("Xx") != std::string::npos && msg.find("supported") != std::string::npos && msg.find("Cu") != std::string::npos, "unknown element message: '%s'", msg.c_str());
+    CHECK(ZhouEAM::lookup("Xx") == nullptr && ZhouEAM::lookup("Cu") != nullptr && ZhouEAM::lookup("cu") == nullptr, "lookup is exact and null-safe");
+    CHECK(ZhouEAM::supported().find("Au") != std::string::npos, "supported() lists Au");
+    ZhouEAM cuau({"Cu", "Au"});
+    CHECK(cuau.index_of("Cu") == 0 && cuau.index_of("Au") == 1, "index_of");
+    threw = false; msg.clear();
+    try { cuau.index_of("Fe"); } catch (const std::runtime_error& e) { threw = true; msg = e.what(); }
+    CHECK(threw && msg.find("Fe") != std::string::npos, "index_of unknown element must throw");
+    CHECK(cuau.cutoff() > 4 && cuau.cutoff() < 12 && cuau.mass(0) > 60 && cuau.mass(0) < 66 && cuau.mass(1) > 195 && cuau.mass(1) < 200 && cuau.name() == "Zhou04-EAM",
+          "potential metadata (rc %.3f, mass Cu %.2f, Au %.2f)", cuau.cutoff(), cuau.mass(0), cuau.mass(1));
+    threw = false;
+    try { parent_supercell("sc", 2, 0); } catch (const std::runtime_error&) { threw = true; }
+    CHECK(threw, "unknown parent lattice must throw");
+    for (const char* par : {"fcc", "bcc", "hcp"}) {
+        const Structure p = parent_supercell(par, 2, 1);
+        bool all1 = true; for (int sp : p.species) all1 &= sp == 1;
+        CHECK(p.size() > 0 && all1, "%s parent supercell is single-species", par);
+    }
+}
+
+static void test_io_roundtrip() {
+    std::puts("[io] POSCAR / extxyz / report.json writers: round trip against the in-memory structure, valid JSON, escaping");
+    test_json_helper_selfcheck();
+    const fs::path dir = scratch_dir("io");
+    const std::vector<std::string> els{"Cu", "Au"};
+
+    // --- POSCAR, mixed species, rattled triclinic cell
+    const Structure s = rattled("L1_1", 2, 1, 2, 3.75, 0.05, 11);
+    write_poscar((dir / "mixed.POSCAR").string(), s, els);
+    auto L = read_lines(dir / "mixed.POSCAR");
+    CHECK(L.size() == 8 + s.size(), "POSCAR has %zu lines, expected %zu", L.size(), 8 + s.size());
+    if (L.size() == 8 + s.size()) {
+        CHECK(L[0] == s.label && L[1] == "1.0", "POSCAR title/scale '%s' '%s'", L[0].c_str(), L[1].c_str());
+        double cell_err = 0;
+        for (int i = 0; i < 3; ++i) { const auto v = numbers(L[2 + i]); if (v.size() != 3) { cell_err = 1e9; break; } for (int k = 0; k < 3; ++k) cell_err = std::max(cell_err, std::abs(v[k] - s.cell(i, k))); }
+        CHECK(cell_err < 1e-9, "POSCAR cell differs from structure by %.2e", cell_err);
+        CHECK(L[5] == " Cu Au" && numbers(L[6]).size() == 2 && int(numbers(L[6])[0]) == int(s.size()) / 2 && int(numbers(L[6])[1]) == int(s.size()) / 2, "POSCAR species/count lines '%s' / '%s'", L[5].c_str(), L[6].c_str());
+        CHECK(L[7] == "Direct", "POSCAR coordinate mode '%s'", L[7].c_str());
+        // coordinates are grouped by species in header order; compare with the structure
+        std::size_t row = 8; double pos_err = 0;
+        for (int e = 0; e < 2; ++e) for (std::size_t i = 0; i < s.size(); ++i) if (s.species[i] == e) {
+            const auto v = numbers(L[row++]); const Vec3 f = s.to_frac(s.pos[i]);
+            if (v.size() != 3) { pos_err = 1e9; continue; }
+            pos_err = std::max({pos_err, std::abs(v[0] - f.x), std::abs(v[1] - f.y), std::abs(v[2] - f.z)});
+        }
+        CHECK(pos_err < 1e-9, "POSCAR fractional coordinates differ by %.2e", pos_err);
+    }
+    // single-species structures list only the species that is present, even if it is the second element
+    Structure au = proto("A1", 1, 1).supercell(2, 2, 2);
+    write_poscar((dir / "au.POSCAR").string(), au, els);
+    L = read_lines(dir / "au.POSCAR");
+    CHECK(L.size() == 8 + au.size() && L[5] == " Au" && int(numbers(L[6])[0]) == int(au.size()), "pure-Au POSCAR header '%s' '%s'", L.size() > 6 ? L[5].c_str() : "", L.size() > 6 ? L[6].c_str() : "");
+
+    // --- extxyz
+    write_extxyz((dir / "mixed.xyz").string(), s, els, -3.5);
+    L = read_lines(dir / "mixed.xyz");
+    CHECK(L.size() == 2 + s.size() && int(numbers(L[0])[0]) == int(s.size()), "extxyz has %zu lines", L.size());
+    if (L.size() == 2 + s.size()) {
+        const std::string& h = L[1];
+        const auto q0 = h.find("Lattice=\""), q1 = q0 == std::string::npos ? q0 : h.find('"', q0 + 9);
+        CHECK(q0 != std::string::npos && q1 != std::string::npos, "extxyz header has no Lattice=\"...\"");
+        if (q0 != std::string::npos && q1 != std::string::npos) {
+            const auto lv = numbers(h.substr(q0 + 9, q1 - q0 - 9));
+            double e = lv.size() == 9 ? 0 : 1e9;
+            for (std::size_t k = 0; k < lv.size() && k < 9; ++k) e = std::max(e, std::abs(lv[k] - s.cell.m[k]));
+            CHECK(e < 1e-7, "extxyz lattice differs by %.2e (%zu numbers)", e, lv.size());
+        }
+        CHECK(h.find("Properties=species:S:1:pos:R:3") != std::string::npos && h.find("energy=-3.5") != std::string::npos && h.find("pbc=\"T T T\"") != std::string::npos,
+              "extxyz header fields: %s", h.c_str());
+        double pe = 0; bool names = true;
+        for (std::size_t i = 0; i < s.size(); ++i) {
+            std::istringstream in(L[2 + i]); std::string sp; double x, y, z; in >> sp >> x >> y >> z;
+            names &= sp == els[s.species[i]];
+            pe = std::max({pe, std::abs(x - s.pos[i].x), std::abs(y - s.pos[i].y), std::abs(z - s.pos[i].z)});
+        }
+        CHECK(names && pe < 1e-7, "extxyz atoms: species ok=%d, max position error %.2e", names, pe);
+    }
+
+    // --- json_escape
+    CHECK(json_escape("plain") == "plain" && json_escape("a\"b") == "a\\\"b" && json_escape("c\\d") == "c\\\\d" && json_escape("") == "", "json_escape basic cases");
+
+    // --- report.json from a synthetic result with awkward labels
+    SearchResult R;
+    R.A = "Cu"; R.B = "Au"; R.potential = "Zhou04-EAM"; R.muA = -3.54; R.muB = -3.79; R.refA = "fcc \"A1\""; R.refB = "fcc\\A1";
+    R.hull = {{0, 0, 0}, {0.25, -0.09, 1}, {1, 0, 2}};
+    Candidate c0; c0.id = 0; c0.source = "prototype"; c0.label = "L1_2 \"Cu3Au\""; c0.parent = "fcc"; c0.relaxed = proto("L1_2", 0, 1); c0.x = 0.25; c0.e_per_atom = -3.6; c0.ef = -0.09;
+    c0.vol_per_atom = 12.5; c0.converged = true; c0.screened = true; c0.verdict = "STABLE (on \"hull\")"; c0.elastic.bulk_voigt = 140; c0.elastic.shear_voigt = 40; c0.elastic.eigen[0] = 25;
+    c0.elastic.C[0][0] = 190; c0.elastic.C[0][1] = 120; c0.elastic.C[3][3] = 70; c0.thermal.T = 600; c0.thermal.rms_disp = 0.2; c0.thermal.retained = true;
+    Candidate c1 = c0; c1.id = 1; c1.label = "plain"; c1.screened = false; c1.converged = false;
+    R.candidates = {c0, c1};
+    write_report_json((dir / "synthetic.json").string(), R);
+    Json J;
+    const bool valid = JsonParser::parse(slurp(dir / "synthetic.json"), J);
+    CHECK(valid, "synthetic report.json is not valid JSON");
+    if (valid) {
+        CHECK(J.get("system") && J.get("system")->arr.size() == 2 && J.get("system")->arr[1].str == "Au" && J.get("potential") && J.get("potential")->str == "Zhou04-EAM", "report system/potential");
+        const Json* ref = J.get("reference");
+        CHECK(ref && ref->get("Cu") && ref->get("Cu")->get("phase") && ref->get("Cu")->get("phase")->str == "fcc \"A1\"" && ref->get("Au")->get("phase")->str == "fcc\\A1" &&
+              std::abs(ref->get("Cu")->get("mu")->num + 3.54) < 1e-9, "report reference block / escaping round trip");
+        CHECK(J.get("hull") && J.get("hull")->arr.size() == 3 && std::abs(J.get("hull")->arr[1].get("ef")->num + 0.09) < 1e-9, "report hull");
+        const Json* cand = J.get("candidates");
+        CHECK(cand && cand->arr.size() == 2, "report candidate count");
+        if (cand && cand->arr.size() == 2) {
+            const Json& a = cand->arr[0]; const Json& b = cand->arr[1];
+            CHECK(a.get("label")->str == "L1_2 \"Cu3Au\"" && a.get("natoms")->num == 4 && a.get("converged")->num == 1 && b.get("converged")->t == Json::Bool && b.get("converged")->num == 0, "candidate fields / label escaping round trip");
+            const Json* sc = a.get("screen");
+            CHECK(sc && sc->get("verdict")->str == "STABLE (on \"hull\")" && sc->get("bulk_GPa")->num == 140 && sc->get("C44")->num == 70 && sc->get("md_T")->num == 600, "screen block");
+            CHECK(b.get("screen") == nullptr, "unscreened candidates must not have a screen block");
+        }
+    }
+    // empty result is still valid JSON
+    SearchResult E; E.A = "Cu"; E.B = "Au";
+    write_report_json((dir / "empty.json").string(), E);
+    CHECK(JsonParser::parse(slurp(dir / "empty.json"), J) && J.get("candidates") && J.get("candidates")->arr.empty() && J.get("hull")->arr.empty(), "empty report must be valid JSON");
+
+    // --- report.json from a real reduced search, plus structure files for every candidate (what the CLI writes)
+    SearchOptions o;
+    o.verbose = false; o.mc_parents = {"fcc"}; o.mc_fractions = {0.5}; o.mc_sweeps = 10; o.ss_seeds = 1; o.md_steps = 100;
+    const auto RS = binary_search("Cu", "Au", o);
+    write_report_json((dir / "real.json").string(), RS);
+    const bool rvalid = JsonParser::parse(slurp(dir / "real.json"), J);
+    CHECK(rvalid, "report.json from a real search is not valid JSON");
+    if (rvalid) {
+        CHECK(J.get("candidates") && J.get("candidates")->arr.size() == RS.candidates.size() && J.get("hull")->arr.size() == RS.hull.size(), "real report sizes (%zu candidates)", RS.candidates.size());
+        bool finite = true;
+        for (const auto& cj : J.get("candidates")->arr) for (const char* k : {"x", "e_per_atom", "ef", "e_hull", "vol_per_atom"}) finite &= cj.get(k) && std::isfinite(cj.get(k)->num);
+        CHECK(finite, "non-finite number in real report");
+    }
+    for (const auto& c : RS.candidates) {
+        write_poscar((dir / (std::to_string(c.id) + ".POSCAR")).string(), c.relaxed, els);
+        write_extxyz((dir / (std::to_string(c.id) + ".xyz")).string(), c.relaxed, els, c.e_per_atom * double(c.relaxed.size()));
+    }
+    int mismatch = 0;
+    for (const auto& c : RS.candidates) {
+        const auto P = read_lines(dir / (std::to_string(c.id) + ".POSCAR")), X = read_lines(dir / (std::to_string(c.id) + ".xyz"));
+        if (P.size() != 8 + c.relaxed.size() || X.size() != 2 + c.relaxed.size()) ++mismatch;
+    }
+    CHECK(mismatch == 0, "%d candidates have POSCAR/xyz files with the wrong line count", mismatch);
+    fs::remove_all(dir);
+}
+
+// Run a command, capture stdout+stderr and the exit status.
+struct CmdResult { int status{-1}; std::string out; };
+static CmdResult run_cmd(const std::string& cmd) {
+    CmdResult r;
+    FILE* p = popen((cmd + " 2>&1").c_str(), "r");
+    if (!p) return r;
+    char buf[4096]; std::size_t n;
+    while ((n = std::fread(buf, 1, sizeof buf, p)) > 0) r.out.append(buf, n);
+    const int st = pclose(p);
+    r.status = WIFEXITED(st) ? WEXITSTATUS(st) : 128;
+    return r;
+}
+static const char* g_cli = nullptr;
+
+static void test_cli_exe() {
+    std::puts("[cli] the atomforge executable: usage and error exit codes, elements, relax, a reduced search that writes report + structures");
+    if (!g_cli) { std::puts("  skipped: run as `test_atomforge cli <path-to-atomforge>`"); return; }
+    const std::string cli = std::string("'") + g_cli + "'";
+    auto has = [](const CmdResult& r, const char* s) { return r.out.find(s) != std::string::npos; };
+
+    auto r = run_cmd(cli);
+    CHECK(r.status == 1 && has(r, "atomforge") && has(r, "search <A> <B>"), "no arguments: status %d, usage expected", r.status);
+    r = run_cmd(cli + " frobnicate");
+    CHECK(r.status == 1 && has(r, "atomforge validate"), "unknown command: status %d, usage expected", r.status);
+
+    r = run_cmd(cli + " elements");
+    int lines = 0; for (std::size_t p = 0; (p = r.out.find("Z=", p)) != std::string::npos; ++p) ++lines;
+    CHECK(r.status == 0 && lines == 17 && has(r, "  Cu ") && has(r, "  Au "), "elements: status %d, %d element lines (expected 17)", r.status, lines);
+
+    r = run_cmd(cli + " relax L1_2 Cu Au");
+    CHECK(r.status == 0 && has(r, "L1_2 (Cu3Au) CuAu: E = ") && has(r, "(converged)") && has(r, "Born-stable") && !has(r, "UNSTABLE"), "relax L1_2 Cu Au: status %d\n%s", r.status, r.out.c_str());
+    double E = 0, V = 0; const auto e0 = r.out.find("E = ");
+    if (e0 != std::string::npos) std::sscanf(r.out.c_str() + e0, "E = %lf eV/atom, V = %lf", &E, &V);
+    CHECK(E < -3.4 && E > -4.0 && V > 11 && V < 16, "relax L1_2 CuAu energy/volume per atom %.4f eV, %.3f A^3 outside the physical window", E, V);
+    r = run_cmd(cli + " relax A1 Cu");
+    CHECK(r.status == 0 && has(r, " Cu: E = ") && has(r, "Born-stable"), "relax A1 Cu (single element, B defaults to A): status %d", r.status);
+    r = run_cmd(cli + " relax A2 Cu");
+    CHECK(r.status == 0 && has(r, "Born-UNSTABLE"), "bcc Cu must be reported Born-UNSTABLE: status %d", r.status);
+    r = run_cmd(cli + " relax ZZ9 Cu Au");
+    CHECK(r.status == 1 && has(r, "unknown prototype ZZ9"), "unknown prototype: status %d", r.status);
+    r = run_cmd(cli + " relax L1_2 Cu Xx");
+    CHECK(r.status == 2 && has(r, "error:") && has(r, "Xx"), "unsupported element: status %d '%s'", r.status, r.out.c_str());
+    r = run_cmd(cli + " relax L1_2");
+    CHECK(r.status == 1 && has(r, "atomforge relax"), "relax with missing arguments: status %d", r.status);
+    r = run_cmd(cli + " search Cu");
+    CHECK(r.status == 1 && has(r, "atomforge search"), "search with missing arguments: status %d", r.status);
+    r = run_cmd(cli + " search Cu Xx --mc-sweeps 1 --md-steps 1");
+    CHECK(r.status == 2 && has(r, "error:"), "search with unsupported element: status %d", r.status);
+
+    // reduced search: only flags the CLI exposes, so this is the user-visible path (all parents, one seed set is too slow -> small MC/MD)
+    const fs::path dir = scratch_dir("cli");
+    const auto t0 = std::chrono::steady_clock::now();
+    r = run_cmd(cli + " search Cu Au --out '" + (dir / "out").string() + "' --mc-sweeps 5 --md-steps 100 --T 300");
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("  search Cu Au (reduced): status %d in %.1f s\n", r.status, secs);
+    CHECK(r.status == 0 && has(r, "Stability screen:") && has(r, "wrote ") && has(r, "report.json"), "search: status %d\n%s", r.status, r.out.c_str());
+    Json J;
+    const bool ok = fs::exists(dir / "out" / "report.json") && JsonParser::parse(slurp(dir / "out" / "report.json"), J);
+    CHECK(ok, "search did not write a valid report.json");
+    if (ok) {
+        const auto& cands = J.get("candidates")->arr;
+        CHECK(cands.size() > 10 && J.get("hull")->arr.size() >= 2, "report has %zu candidates, %zu hull points", cands.size(), J.get("hull")->arr.size());
+        int missing = 0, badxyz = 0;
+        for (const auto& c : cands) {
+            const std::string id = std::to_string(int(c.get("id")->num));
+            const fs::path pos = dir / "out" / "structures" / (id + ".POSCAR"), xyz = dir / "out" / "structures" / (id + ".xyz");
+            if (!fs::exists(pos) || !fs::exists(xyz)) { ++missing; continue; }
+            const auto X = read_lines(xyz);
+            if (X.empty() || int(numbers(X[0])[0]) != int(c.get("natoms")->num) || X.size() != 2 + std::size_t(c.get("natoms")->num)) ++badxyz;
+        }
+        CHECK(missing == 0 && badxyz == 0, "%d candidates lack structure files, %d xyz files disagree with report natoms", missing, badxyz);
+        std::size_t listed = 0; for (const auto& e : fs::directory_iterator(dir / "out" / "structures")) listed += e.path().extension() == ".POSCAR";
+        CHECK(listed == cands.size(), "%zu POSCAR files for %zu candidates", listed, cands.size());
+    }
+    fs::remove_all(dir);
+}
+
+// `io` and `cli` groups: the a02/a01 checks (always run) followed by the coverage checks
+static void test_io() { test_io_errors(); test_io_roundtrip(); }
+static void test_cli() { test_cli_args(); test_cli_exe(); }
+
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"forces", test_forces}, {"virial", test_virial}, {"invariance", test_invariance}, {"relax", test_relax},
-                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"cli", test_cli}, {"io", test_io}, {"unwrapped", test_unwrapped}, {"md_invariance", test_md_invariance}};
+                            {"hull", test_hull}, {"born", test_born}, {"validate_unit", test_validate_unit}, {"unwrapped", test_unwrapped}, {"md_invariance", test_md_invariance},
+                            {"structure_misc", test_structure_misc}, {"io", test_io}, {"cli", test_cli}};
+    if (argc > 2) g_cli = argv[2];
     const char* want = argc > 1 ? argv[1] : nullptr;
     bool ran = false;
     for (const auto& g : groups) {

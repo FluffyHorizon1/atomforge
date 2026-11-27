@@ -26,6 +26,24 @@ Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binari
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
 
+## Materials sidecar (`forge.materials.v0`)
+
+```bash
+./build/atomforge search Cu Au --materials   # also writes results/CuAu/materials-contract-CuAu.json
+```
+
+Writes the interchange sidecar proposed in qpuforge
+[`docs/DATA_CONTRACT.md`](https://github.com/FluffyHorizon1/qpuforge/blob/f64238f/docs/DATA_CONTRACT.md)
+(branch `docs/materials-data-contract`, commit `f64238f`); the writer is `include/atomforge/materials.hpp`.
+
+- **Real (computed by the EAM model):** `produced_by`, `system`, `structures_ref`, and an additive optional block
+  `atomforge_computed` with elemental references and hull phases (energies, formation energies, cell edges and angles, Born
+  elastic constants). These are classical-EAM numbers, not DFT.
+- **Placeholders (not computed, `value: null`, `status: "placeholder"`):** `Q_dielectric`, `loss_tangent`,
+  `junction_gap_ueV`. They are listed in the top-level `placeholders` array. Do not copy them into a chip JSON.
+
+The contract is still a proposal, so the format may change.
+
 ## Energy model
 
 The Zhou–Johnson–Wadley analytic EAM (Phys. Rev. B 69, 144113, 2004) covers 17 metals: Cu Ag Au Ni Pd Pt Al Pb Fe
@@ -74,6 +92,9 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `external_errors` [unit, external] | missing worker, early exit, handshake timeout, wrong protocol, crash, hang, NaN, wrong shape, bad JSON, wrong id, worker-side error, stderr log |
 | `external_cli` [cli, external] | `atomforge relax --potential external:...` end to end against `--potential lj`, and its error exits |
 | `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
+| `structure_misc` [unit] | composition, fraction and supercell bookkeeping; errors for unknown elements, prototypes and parent lattices |
+| `io` [unit] | writers throw `cannot write` on unwritable paths; POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
+| `cli` [unit, cli, slow] | the `atomforge` executable: unknown, missing, non-numeric and out-of-range `search` arguments fail fast; usage and error exit codes, `elements`, `relax` (stable and Born-unstable cases), and a reduced `search` whose `report.json` and structure files are cross-checked. Runs as `test_atomforge cli <path-to-atomforge>`; the executable checks are skipped without the path |
 
 The suite takes about 5 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, MD
 thermodynamics beyond the shift-invariance check, file output (`io.hpp`) or the `search`/`relax` command-line paths.
