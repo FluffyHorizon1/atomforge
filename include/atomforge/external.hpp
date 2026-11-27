@@ -18,9 +18,10 @@
 // JSON, a wrong id, missing fields, the wrong number of atoms or vectors, or any non-finite number makes evaluate() throw
 // ExternalPotentialError. The message includes the tail of the worker's stderr log. A worker that failed is killed and is not
 // restarted: later calls throw too. A reply {"id":N,"error":"..."} also throws, but leaves the worker running (an SCF that
-// did not converge should not end a search). POSIX only (posix_spawn, socketpair, poll). Not thread-safe.
+// did not converge should not end a search). POSIX only (posix_spawn, socketpair, poll). One request at a time: a concurrent evaluate() from a second thread throws.
 #pragma once
 #include "potential.hpp"
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -235,6 +236,10 @@ public:
     bool alive() const { return pid_ > 0; }
 
     EvalResult evaluate(const Structure& s, NeighborList&) const override {
+        // One worker serves one request at a time. atomforge's relax / search / phonons call evaluate() sequentially; a
+        // second, concurrent call (another thread) is refused rather than interleaved on the pipe.
+        if (busy_.exchange(true)) throw ExternalPotentialError("ExternalPotential::evaluate called concurrently; use one ExternalPotential (worker) per thread");
+        struct Release { std::atomic<bool>& b; ~Release() { b = false; } } release{busy_};
         if (pid_ <= 0) throw ExternalPotentialError("external worker is not running (it failed earlier; see " + opt_.log_path + ")");
         const std::size_t N = s.size();
         if (s.species.size() != N) throw ExternalPotentialError("structure has " + std::to_string(s.species.size()) + " species for " + std::to_string(N) + " atoms");
@@ -289,6 +294,7 @@ private:
     mutable int fd_ = -1;        // our end of the socketpair (worker stdin+stdout)
     mutable std::string rbuf_;
     mutable long next_id_ = 1;
+    mutable std::atomic<bool> busy_{false};
 
     static std::string default_log_path() {
         const char* t = std::getenv("TMPDIR");

@@ -69,7 +69,15 @@ inline void write_report_json(const std::string& path, const SearchResult& R) {
               << ", \"shear_GPa\": " << c.elastic.shear_voigt << ", \"min_C_eig_GPa\": " << c.elastic.eigen[0]
               << ", \"C11\": " << c.elastic.C[0][0] << ", \"C12\": " << c.elastic.C[0][1] << ", \"C44\": " << c.elastic.C[3][3]
               << ", \"md_T\": " << c.thermal.T << ", \"md_rms_disp\": " << c.thermal.rms_disp
-              << ", \"dE_quench\": " << c.thermal.dE_quench_per_atom << ", \"max_site_shift\": " << c.thermal.max_site_shift << "}";
+              << ", \"dE_quench\": " << c.thermal.dE_quench_per_atom << ", \"max_site_shift\": " << c.thermal.max_site_shift;
+            if (c.phonons.computed) {
+                const auto& P = c.phonons;
+                f << ", \"phonons\": {\"supercell\": [" << P.n[0] << ", " << P.n[1] << ", " << P.n[2] << "], \"n_q\": " << P.nq
+                  << ", \"min_THz\": " << P.min_THz << ", \"max_THz\": " << P.max_THz << ", \"gamma_acoustic_THz\": " << P.gamma_acoustic_THz
+                  << ", \"n_imaginary\": " << P.n_imag << ", \"imag_tol_THz\": " << P.imag_tol_THz
+                  << ", \"dynamically_stable\": " << (P.stable ? "true" : "false") << ", \"evaluations\": " << P.evaluations << "}";
+            }
+            f << "}";
         }
         f << "}" << (k + 1 < R.candidates.size() ? "," : "") << "\n";
     }
