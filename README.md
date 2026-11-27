@@ -137,7 +137,7 @@ From the command line:
 ```
 
 Both LJ runs above give E = -0.07762 eV/atom and V = 36.5108 Å³/atom in 33 FIRE steps (34 worker calls). For external
-potentials the elastic tensor is off by default (`--elastic` turns it on), because it costs about 25 more evaluations.
+potentials the elastic tensor is off by default (`--elastic` turns it on), because it costs at least 24 more evaluations (12 strained cells, each with an internal relaxation; 24 for fcc Ar with the `lj` worker).
 `--worker-timeout S` bounds each evaluation (default 3600 s).
 
 In the tests, the bridge with the `lj` worker reproduces the native LJ energy, forces and virial to better than 1e-9 (the
