@@ -96,8 +96,8 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `io` [unit] | writers throw `cannot write` on unwritable paths; POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
 | `cli` [unit, cli, slow] | the `atomforge` executable: unknown, missing, non-numeric and out-of-range `search` arguments fail fast; usage and error exit codes, `elements`, `relax` (stable and Born-unstable cases), and a reduced `search` whose `report.json` and structure files are cross-checked. Runs as `test_atomforge cli <path-to-atomforge>`; the executable checks are skipped without the path |
 
-The suite takes about 5 s. It does not cover the Monte Carlo ordering search beyond the reduced hull run, MD
-thermodynamics beyond the shift-invariance check, file output (`io.hpp`) or the `search`/`relax` command-line paths.
+It does not cover the Monte Carlo ordering search beyond the reduced hull and CLI runs, or MD thermodynamics beyond the
+shift-invariance check.
 The `external*` groups need `python3` and are reported as skipped (exit 77) without it; they do not run the `pyscf` or
 `mace` backends.
 
