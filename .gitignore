@@ -29,3 +29,4 @@ a.out
 .DS_Store
 
 # note: results/ is intentionally NOT ignored (committed example output)
+__pycache__/
