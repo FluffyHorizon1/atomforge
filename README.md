@@ -91,6 +91,9 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `external_relax` [physics, external] | FIRE with full cell through the bridge: same steps, energy and volume as the native run; residual force and stress |
 | `external_errors` [unit, external] | missing worker, early exit, handshake timeout, wrong protocol, crash, hang, NaN, wrong shape, bad JSON, wrong id, worker-side error, stderr log |
 | `external_cli` [cli, external] | `atomforge relax --potential external:...` end to end against `--potential lj`, a reduced `search` through the worker (report names the backend, has `screen.phonons`), and the error exits |
+| `external_json` [unit, external] | the protocol's JSON reader and number formatting (no python3 needed) |
+| `external_locale` [unit, external] | JSON numbers and a whole handshake under a de_DE decimal-comma locale, generated with `localedef` into a temporary `LOCPATH`; skipped if that is not possible |
+| `external_cli_args` [cli, external] | `relax` argument and failure exit codes: 1 for usage and argument errors (including a bad `--potential`), 2 for failures while running (no python3 needed) |
 | `external_search` [physics, external, slow] | `binary_search` through the `lj` worker reproduces the native LJ search exactly; `report.json` names the backend and carries `screen.phonons`; full reduced pipeline (MC included) on the native LJ |
 | `phonons` [physics, phonons] | fcc Cu (EAM) stable, acoustic modes 0 at Γ, X-point frequencies vs experiment, supercell convergence; bcc Cu imaginary at N |
 | `phonons_lj` [unit, phonons] | Lennard-Jones fcc phonons vs the analytic dispersion (commensurate and interpolated q); force constants through the bridge equal the native ones |
