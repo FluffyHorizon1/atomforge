@@ -3,6 +3,15 @@
 ## [Unreleased]
 
 ### Added
+- Ni–Al through the bridge. Recorded MACE runs (`results/NiAl_mace_*`, `quantum/run_nial_mace.sh`): fcc Ni, fcc Al, B2
+  NiAl and L1₂ Ni₃Al relaxed with elastic constants and phonons for two models, and a reduced `search Ni Al` with its
+  hull. A PySCF convergence study of the B2 NiAl formation energy at fixed geometry
+  (`quantum/nial_pyscf_convergence.py`, `results/NiAl_pyscf_convergence.*`).
+- `quantum/worker.py pyscf`: `--spin-polarised` (KUKS, reply field `moment`), `--multigrid`, `--ke-cutoff`,
+  `--max-cycle`. `quantum/worker.py mace`: `--model` accepts a file, `--threads`; versions and the model's SHA-256 go to
+  the log. The protocol is unchanged.
+- CTest groups `external_pyscf` and `external_mace`, and CI jobs `pyscf backend` and `mace backend`.
+
 - CI: `.github/workflows/qpuforge-crosscheck.yml` and `tools/qpuforge_crosscheck.sh` (qpuforge decision D3,
   2026-11-28). The job builds qpuforge's sidecar reader at a pinned ref (`qpuforge_ref` input, `QPUFORGE_REF` variable,
   default `main`), runs `search Cu Au --quick --materials` and requires qpuforge to read the sidecar: exit 0, all three
@@ -28,3 +37,8 @@
   in `report.json` (`assessed`, `asr_violation_eV_A2`, `min_width_A`).
 - CTest groups `external_search`, `phonons`, `phonons_lj`, `phonons_basis`, `phonons_asr` and `phonons_search`.
 - CTest groups `lj`, `external`, `external_relax`, `external_errors` and `external_cli` (`tests/test_external.cpp`).
+
+### Fixed
+- `quantum/worker.py pyscf` refuses a spin-restricted run whose electron count over the k-mesh is odd. PySCF's smeared
+  KRKS computed a charged cell there without an error (fcc Al on 3×3×3 k-points: 3.037 electrons per cell, energy
+  0.33 eV too high); the k = 3 line of `results/pyscf_probe_log.txt` is such a run and is annotated.

@@ -1,0 +1,542 @@
+{
+ "Al|gth-dzvp-molopt-sr|k2|s0.005|c400|r": {
+  "cycles": 4,
+  "e": -8.204740276972068,
+  "e_zero": -8.207437391773443,
+  "f": -8.210134506574818,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 52,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 14.239506721496582,
+  "wall": 14.239514350891113
+ },
+ "Al|gth-dzvp-molopt-sr|k4|s0.005|c400|r": {
+  "cycles": 4,
+  "e": -8.282252259045023,
+  "e_zero": -8.284639463134024,
+  "f": -8.287026667223023,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 52,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 26.55428171157837,
+  "wall": 26.55429196357727
+ },
+ "Al|gth-szv-molopt-sr|k2|s0.005|c200|r": {
+  "cycles": 3,
+  "e": -7.99295341721688,
+  "e_zero": -7.996161902999009,
+  "f": -7.999370388781138,
+  "mesh": [
+   52,
+   52,
+   52
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,multigrid)",
+  "nao": 16,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 5.335209131240845,
+  "wall": 5.335217237472534
+ },
+ "Al|gth-szv-molopt-sr|k2|s0.005|c400|r": {
+  "cycles": 3,
+  "e": -7.992952884805223,
+  "e_zero": -7.996161270936254,
+  "f": -7.999369657067285,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 16,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 7.576369524002075,
+  "wall": 7.576378583908081
+ },
+ "Al|gth-szv-molopt-sr|k2|s0.005|c800|r": {
+  "cycles": 3,
+  "e": -7.992952379253746,
+  "e_zero": -7.996160979654901,
+  "f": -7.999369580056056,
+  "mesh": [
+   100,
+   100,
+   100
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=800Ha,multigrid)",
+  "nao": 16,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 10.421490907669067,
+  "wall": 10.421499252319336
+ },
+ "Al|gth-szv-molopt-sr|k2|s0.005|cauto|r": {
+  "cycles": 3,
+  "e": -7.9929493007367585,
+  "e_zero": -7.99615862818422,
+  "f": -7.99936795563168,
+  "mesh": [
+   38,
+   38,
+   38
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,multigrid)",
+  "nao": 16,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 4.732046127319336,
+  "wall": 4.732055902481079
+ },
+ "Al|gth-szv-molopt-sr|k4|s0.0025|c400|r": {
+  "cycles": 3,
+  "e": -8.114938931286453,
+  "e_zero": -8.115276452755356,
+  "f": -8.11561397422426,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.0025Ha,cut=400Ha,multigrid)",
+  "nao": 16,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 15.553609609603882,
+  "wall": 15.553617238998413
+ },
+ "Al|gth-szv-molopt-sr|k4|s0.005|c400|r": {
+  "cycles": 3,
+  "e": -8.114332294509131,
+  "e_zero": -8.115390100631902,
+  "f": -8.116447906754676,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 16,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 16.61351251602173,
+  "wall": 16.61353039741516
+ },
+ "Al|gth-szv-molopt-sr|k4|s0.01|c400|r": {
+  "cycles": 3,
+  "e": -8.110446657168966,
+  "e_zero": -8.115122997311286,
+  "f": -8.119799337453605,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.01Ha,cut=400Ha,multigrid)",
+  "nao": 16,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 15.56457805633545,
+  "wall": 15.56458854675293
+ },
+ "Al|gth-szv-molopt-sr|k6|s0.005|c400|r": {
+  "cycles": 3,
+  "e": -8.116114660045804,
+  "e_zero": -8.11725829626495,
+  "f": -8.118401932484096,
+  "mesh": [
+   72,
+   72,
+   72
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=6,6,6,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 16,
+  "nk": 216,
+  "nk_ibz": 20,
+  "t_scf": 39.92867612838745,
+  "wall": 39.92868399620056
+ },
+ "NiAl|gth-dzvp-molopt-sr|k2|s0.005|c400|r": {
+  "cycles": 10,
+  "e": -171.42787089384933,
+  "e_zero": -171.42941468974843,
+  "f": -171.43095848564752,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 39,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 25.36916732788086,
+  "wall": 25.369174003601074
+ },
+ "NiAl|gth-dzvp-molopt-sr|k4|s0.005|c400|r": {
+  "cycles": 9,
+  "e": -171.42844485874988,
+  "e_zero": -171.42921550264472,
+  "f": -171.4299861465396,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 39,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 32.85674691200256,
+  "wall": 32.85675382614136
+ },
+ "NiAl|gth-szv-molopt-sr|k2|s0.005|c200|r": {
+  "cycles": 9,
+  "e": -171.32627306168808,
+  "e_zero": -171.32795266710355,
+  "f": -171.329632272519,
+  "mesh": [
+   37,
+   37,
+   37
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,multigrid)",
+  "nao": 14,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 9.099119901657104,
+  "wall": 9.099128007888794
+ },
+ "NiAl|gth-szv-molopt-sr|k2|s0.005|c400|r": {
+  "cycles": 8,
+  "e": -171.32451378560546,
+  "e_zero": -171.32619016324784,
+  "f": -171.32786654089026,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 14,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 11.007169723510742,
+  "wall": 11.007179260253906
+ },
+ "NiAl|gth-szv-molopt-sr|k2|s0.005|c800|r": {
+  "cycles": 8,
+  "e": -171.32454136838697,
+  "e_zero": -171.3262177774151,
+  "f": -171.32789418644322,
+  "mesh": [
+   71,
+   71,
+   71
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=800Ha,multigrid)",
+  "nao": 14,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 16.657934427261353,
+  "wall": 16.65794348716736
+ },
+ "NiAl|gth-szv-molopt-sr|k2|s0.005|cauto|r": {
+  "cycles": 8,
+  "e": -171.32454216787545,
+  "e_zero": -171.32621857898144,
+  "f": -171.32789499008746,
+  "mesh": [
+   85,
+   85,
+   85
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,multigrid)",
+  "nao": 14,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 24.43993878364563,
+  "wall": 24.439951181411743
+ },
+ "NiAl|gth-szv-molopt-sr|k4|s0.0025|c400|r": {
+  "cycles": 10,
+  "e": -171.29316301705177,
+  "e_zero": -171.29362737022277,
+  "f": -171.29409172339373,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.0025Ha,cut=400Ha,multigrid)",
+  "nao": 14,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 14.912160634994507,
+  "wall": 14.912168502807617
+ },
+ "NiAl|gth-szv-molopt-sr|k4|s0.005|c400|r": {
+  "cycles": 10,
+  "e": -171.29271109460745,
+  "e_zero": -171.2939599308832,
+  "f": -171.29520876715898,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 14,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 17.372208833694458,
+  "wall": 17.372220277786255
+ },
+ "NiAl|gth-szv-molopt-sr|k4|s0.01|c400|r": {
+  "cycles": 10,
+  "e": -171.2909724247525,
+  "e_zero": -171.29457672645069,
+  "f": -171.2981810281489,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.01Ha,cut=400Ha,multigrid)",
+  "nao": 14,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 15.230588912963867,
+  "wall": 15.230642795562744
+ },
+ "NiAl|gth-szv-molopt-sr|k6|s0.005|c400|r": {
+  "cycles": 10,
+  "e": -171.29777498150474,
+  "e_zero": -171.29869235944363,
+  "f": -171.29960973738253,
+  "mesh": [
+   51,
+   51,
+   51
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=6,6,6,sigma=0.005Ha,cut=400Ha,multigrid)",
+  "nao": 14,
+  "nk": 216,
+  "nk_ibz": 20,
+  "t_scf": 24.40238642692566,
+  "wall": 24.402395009994507
+ },
+ "Ni|gth-dzvp-molopt-sr|k2|s0.005|c400|u": {
+  "cycles": 13,
+  "e": -677.2228445253104,
+  "e_zero": -677.2280031251852,
+  "f": -677.2331617250599,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 2.5297639805868766,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 104,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 259.08970856666565,
+  "wall": 259.089718580246
+ },
+ "Ni|gth-dzvp-molopt-sr|k4|s0.005|c400|u": {
+  "cycles": 11,
+  "e": -677.2268347245945,
+  "e_zero": -677.2339267912728,
+  "f": -677.2410188579511,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 2.7912569915443477,
+  "name": "pyscf(PBE/gth-dzvp-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 104,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 279.73597383499146,
+  "wall": 279.7359871864319
+ },
+ "Ni|gth-szv-molopt-sr|k2|s0.005|c200|u": {
+  "cycles": 7,
+  "e": -676.827380447834,
+  "e_zero": -676.8329899642678,
+  "f": -676.8385994807015,
+  "mesh": [
+   46,
+   46,
+   46
+  ],
+  "moment": 1.409714751883198,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 44.65904259681702,
+  "wall": 44.65905261039734
+ },
+ "Ni|gth-szv-molopt-sr|k2|s0.005|c400|u": {
+  "cycles": 7,
+  "e": -676.8256518373099,
+  "e_zero": -676.8312649616837,
+  "f": -676.8368780860574,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 1.4113254872861407,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 68.6086540222168,
+  "wall": 68.60866379737854
+ },
+ "Ni|gth-szv-molopt-sr|k2|s0.005|c800|u": {
+  "cycles": 7,
+  "e": -676.8257930129463,
+  "e_zero": -676.8314069706014,
+  "f": -676.8370209282565,
+  "mesh": [
+   88,
+   88,
+   88
+  ],
+  "moment": 1.411006098623546,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=800Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 123.3977518081665,
+  "wall": 123.39776134490967
+ },
+ "Ni|gth-szv-molopt-sr|k2|s0.005|cauto|u": {
+  "cycles": 7,
+  "e": -676.825799076943,
+  "e_zero": -676.8314129679056,
+  "f": -676.8370268588684,
+  "mesh": [
+   106,
+   106,
+   106
+  ],
+  "moment": 1.4110028052298205,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 174.01497220993042,
+  "wall": 174.01498293876648
+ },
+ "Ni|gth-szv-molopt-sr|k4|s0.0025|c400|u": {
+  "cycles": 7,
+  "e": -676.765657119611,
+  "e_zero": -676.7679235633445,
+  "f": -676.770190007078,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 2.70639773433832,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.0025Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 85.86380100250244,
+  "wall": 85.86381530761719
+ },
+ "Ni|gth-szv-molopt-sr|k4|s0.005|c400|u": {
+  "cycles": 8,
+  "e": -676.7614032056777,
+  "e_zero": -676.7687269245974,
+  "f": -676.7760506435174,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 2.520934875035576,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.005Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 100.12068772315979,
+  "wall": 100.12069773674011
+ },
+ "Ni|gth-szv-molopt-sr|k4|s0.01|c400|u": {
+  "cycles": 12,
+  "e": -676.7410555480743,
+  "e_zero": -676.7697259886703,
+  "f": -676.7983964292663,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": -0.00010922826013716137,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=4,4,4,sigma=0.01Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 64,
+  "nk_ibz": 10,
+  "t_scf": 123.85850667953491,
+  "wall": 123.8585274219513
+ },
+ "Ni|gth-szv-molopt-sr|k6|s0.005|c400|u": {
+  "cycles": 8,
+  "e": -676.7655854627653,
+  "e_zero": -676.772717595854,
+  "f": -676.7798497289428,
+  "mesh": [
+   62,
+   62,
+   62
+  ],
+  "moment": 2.0489713179791686,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=6,6,6,sigma=0.005Ha,cut=400Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 216,
+  "nk_ibz": 20,
+  "t_scf": 137.79419827461243,
+  "wall": 137.7942078113556
+ }
+}

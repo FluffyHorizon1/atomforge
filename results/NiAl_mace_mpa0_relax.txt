@@ -1,0 +1,50 @@
+# Ni-Al with MACE through the bridge. Date: 2026-11-28T09:03Z. atomforge commit b6f6d35.
+# The L1_2 line below is Ni3Al (three Ni, one Al); the CLI prints the element pair.
+# Host: 4 cores, Linux 6.18.44-fc-v880. Python 3.13.18.
+
+$ ./build/atomforge relax A1 Ni --fmax 0.001 --elastic --phonons --worker-hello-timeout 300 --potential "external:python3 quantum/worker.py mace --model /home/user/mace_models/mace-mpa-0-medium.model --threads 4"
+potential: external:mace(mace-mpa-0-medium.model)
+A1 (fcc) Ni: E = -5.78666 eV/atom, V = 10.9162 A^3/atom, 33 steps (converged)
+  a1 =   3.52137  -0.00000  -0.00000
+  a2 =  -0.00000   3.52137  -0.00000
+  a3 =  -0.00000  -0.00000   3.52137
+  34 worker evaluations in 1.9 s (worker log: /tmp/tmp.hULiTiQK30)
+  C11=290.5 C12=178.2 C44=135.9 GPa | B=215.6 G=104.0 GPa | min eig 112.3 -> Born-stable
+  phonons (3x3x3 supercell, 24 evaluations, 32.6 s): 27 commensurate q, min -0.000 max 8.015 THz, 0 modes below -0.10 THz, sum-rule violation 2.4e-14 eV/A^2 -> dynamically stable
+
+$ ./build/atomforge relax A1 Al --fmax 0.001 --elastic --phonons --worker-hello-timeout 300 --potential "external:python3 quantum/worker.py mace --model /home/user/mace_models/mace-mpa-0-medium.model --threads 4"
+potential: external:mace(mace-mpa-0-medium.model)
+A1 (fcc) Al: E = -3.74000 eV/atom, V = 16.4680 A^3/atom, 23 steps (converged)
+  a1 =   4.03862  -0.00000   0.00000
+  a2 =  -0.00000   4.03862   0.00000
+  a3 =   0.00000   0.00000   4.03862
+  24 worker evaluations in 1.4 s (worker log: /tmp/tmp.hULiTiQK30)
+  C11=114.7 C12=64.8 C44=29.2 GPa | B=81.4 G=27.5 GPa | min eig 29.2 -> Born-stable
+  phonons (3x3x3 supercell, 24 evaluations, 24.8 s): 27 commensurate q, min -0.000 max 7.857 THz, 0 modes below -0.10 THz, sum-rule violation 5.9e-15 eV/A^2 -> dynamically stable
+
+$ ./build/atomforge relax B2 Ni Al --fmax 0.001 --elastic --phonons --worker-hello-timeout 300 --potential "external:python3 quantum/worker.py mace --model /home/user/mace_models/mace-mpa-0-medium.model --threads 4"
+potential: external:mace(mace-mpa-0-medium.model)
+B2 (CsCl) NiAl: E = -5.42262 eV/atom, V = 12.0024 A^3/atom, 30 steps (converged)
+  a1 =   2.88469   0.00000  -0.00000
+  a2 =   0.00000   2.88469  -0.00000
+  a3 =  -0.00000  -0.00000   2.88469
+  31 worker evaluations in 1.4 s (worker log: /tmp/tmp.hULiTiQK30)
+  C11=214.4 C12=149.1 C44=117.3 GPa | B=170.8 G=83.4 GPa | min eig 65.3 -> Born-stable
+  phonons (4x4x4 supercell, 12 evaluations, 19.1 s): 64 commensurate q, min -0.000 max 10.413 THz, 0 modes below -0.10 THz, sum-rule violation 3.1e-14 eV/A^2 -> dynamically stable
+
+$ ./build/atomforge relax L1_2 Ni Al --fmax 0.001 --elastic --phonons --worker-hello-timeout 300 --potential "external:python3 quantum/worker.py mace --model /home/user/mace_models/mace-mpa-0-medium.model --threads 4"
+potential: external:mace(mace-mpa-0-medium.model)
+L1_2 (Cu3Au) NiAl: E = -5.70123 eV/atom, V = 11.2921 A^3/atom, 38 steps (converged)
+  a1 =   3.56132   0.00000   0.00000
+  a2 =   0.00000   3.56132  -0.00000
+  a3 =   0.00000  -0.00000   3.56132
+  39 worker evaluations in 2.4 s (worker log: /tmp/tmp.hULiTiQK30)
+  C11=198.7 C12=136.0 C44=123.5 GPa | B=156.9 G=86.7 GPa | min eig 62.7 -> Born-stable
+  phonons (3x3x3 supercell, 24 evaluations, 32.3 s): 27 commensurate q, min -0.000 max 9.325 THz, 0 modes below -0.10 THz, sum-rule violation 1.2e-13 eV/A^2 -> dynamically stable
+
+# worker log (versions and model hash):
+[worker] mace model file mace-mpa-0-medium.model  sha256 75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638  79462305 bytes
+[worker] mace-torch 0.3.17, torch 2.15.0+cu132, ase 3.30.0, 4 thread(s), device cpu
+[worker] started mace(mace-mpa-0-medium.model)
+
+# formation energies from the lines above (eV/atom): B2 NiAl -0.6593, L1_2 Ni3Al -0.4262

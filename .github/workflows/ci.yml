@@ -228,3 +228,91 @@ jobs:
           name: atomforge-coverage-html
           path: build/coverage-html
           if-no-files-found: error
+
+  # The optional quantum backends of quantum/worker.py, end to end through ExternalPotential. The other jobs do not
+  # install the Python packages, so there these two CTest entries are reported as skipped.
+  pyscf:
+    name: pyscf backend (gcc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PySCF
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install numpy pyscf==2.15.1
+          python3 quantum/worker.py --check pyscf
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DATOMFORGE_NATIVE=OFF
+
+      - name: Build
+        run: cmake --build build --parallel --target test_external
+
+      # fcc Al, 1 atom, gth-szv, 2x2x2 k-points: energy, stress against finite strain, a hydrostatic relaxation,
+      # the spin-polarised path and the refusal of an odd electron count. About 4 minutes on 2 threads.
+      - name: Test (ctest -L pyscf)
+        working-directory: build
+        run: |
+          ctest -L pyscf --output-on-failure --timeout 1500 | tee ctest.log
+          # a skipped test would mean the backend was not exercised
+          grep -q "100% tests passed" ctest.log
+          ! grep -q -i "skipped" ctest.log
+
+  mace:
+    name: mace backend (gcc)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      MACE_MODEL_URL: https://github.com/ACEsuit/mace-mp/releases/download/mace_mpa_0/mace-mpa-0-medium.model
+      MACE_MODEL_SHA256: 75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install mace-torch (CPU build of torch)
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install torch==2.15.0 --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install mace-torch==0.3.17
+          python3 quantum/worker.py --check mace
+
+      - name: Cache the model file
+        id: model
+        uses: actions/cache@v4
+        with:
+          path: mace-model
+          key: mace-model-${{ env.MACE_MODEL_SHA256 }}
+
+      - name: Fetch the model file
+        if: steps.model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p mace-model
+          curl -sSfL --retry 5 -o mace-model/mace-mpa-0-medium.model "$MACE_MODEL_URL"
+
+      - name: Verify the model file
+        run: echo "$MACE_MODEL_SHA256  mace-model/mace-mpa-0-medium.model" | sha256sum -c -
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DATOMFORGE_NATIVE=OFF
+
+      - name: Build
+        run: cmake --build build --parallel --target test_external
+
+      # Rattled B2 NiAl: forces and virial against finite differences; then the formation energy of B2 NiAl.
+      - name: Test (ctest -L mace)
+        working-directory: build
+        env:
+          ATOMFORGE_MACE_MODEL: ${{ github.workspace }}/mace-model/mace-mpa-0-medium.model
+        run: |
+          ctest -L mace --output-on-failure --timeout 900 | tee ctest.log
+          grep -q "100% tests passed" ctest.log
+          ! grep -q -i "skipped" ctest.log

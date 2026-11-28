@@ -110,6 +110,12 @@ if(ATOMFORGE_BUILD_TESTS)
   atomforge_add_external_group(external_locale unit external)
   add_test(NAME external_cli_args COMMAND test_external external_cli_args $<TARGET_FILE:atomforge_cli>)
   set_tests_properties(external_cli_args PROPERTIES LABELS "cli external" TIMEOUT 300 SKIP_RETURN_CODE 77)
+  # The optional backends end to end. Skipped (exit 77) unless the Python packages are installed; external_mace also needs
+  # ATOMFORGE_MACE_MODEL to name a model file. CI runs them in jobs of their own (`ctest -L pyscf`, `ctest -L mace`).
+  add_test(NAME external_pyscf COMMAND test_external external_pyscf)
+  set_tests_properties(external_pyscf PROPERTIES LABELS "physics external pyscf slow" TIMEOUT 1500 SKIP_RETURN_CODE 77)
+  add_test(NAME external_mace COMMAND test_external external_mace)
+  set_tests_properties(external_mace PROPERTIES LABELS "physics external mace slow" TIMEOUT 900 SKIP_RETURN_CODE 77)
 endif()
 # --- forge.materials.v0 sidecar tests (self-contained block).
 # Sits after the CLI validate test so it composes with ci/actions-ctest and with

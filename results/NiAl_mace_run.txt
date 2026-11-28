@@ -1,0 +1,41 @@
+# Ni-Al search with MACE (mace-mpa-0-medium) through the bridge. Date: 2026-11-28T10:31Z. atomforge commit bac5a9e. 4 cores.
+# Reduced: ordered prototypes only (no solid solutions, no Monte Carlo), MD screen of 300 steps.
+$ ./build/atomforge search Ni Al --out results/NiAl_mace --no-ss --no-mc --md-steps 300 --phonons --potential "external:python3 quantum/worker.py mace --model /home/user/mace_models/mace-mpa-0-medium.model --threads 4"
+[1/6] elemental references
+[2/6] ordered prototypes
+[3/6] random solid solutions
+[4/6] Monte Carlo chemical-ordering search
+[5/6] convex hull
+[6/6] stability screen (elastic + MD at 600 K + phonons)
+   screening L1_2 Ni3Al
+   screening L1_0 NiAl
+
+Ni-Al  (external:mace(mace-mpa-0-medium.model))   refs: Ni A1 (fcc) (-5.7867 eV), Al A1 (fcc) (-3.7400 eV)
+  id  structure                          source             x_B  Ef meV/at      Ehull
+   6  L1_2 Ni3Al                         prototype        0.250     -426.2        0.0 <- hull
+  11  D0_3 Ni3Al                         prototype        0.250     -369.2       57.1 
+  14  C15 Ni2Al                          prototype        0.333     -268.5      235.4 
+   8  L1_0 NiAl                          prototype        0.500     -659.3        0.0 <- hull
+  10  B2 NiAl                            prototype        0.500     -659.3        0.0 <- hull
+   9  L1_1 NiAl                          prototype        0.500     -412.5      246.8 
+  15  B1 NiAl                            prototype        0.500      -39.0      620.3 
+  13  C15 NiAl2                          prototype        0.667      153.8      593.3 
+   7  L1_2 NiAl3                         prototype        0.750     -221.8      107.9 
+  12  D0_3 NiAl3                         prototype        0.750      -77.8      251.9 
+
+Stability screen:
+  L1_2 Ni3Al                         Ef= -426.2 meV  B= 156.9 GPa  minCeig=  62.7 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally + dynamically stable)
+                                     phonons 3x3x3: 27 q, min -0.000 max 9.325 THz, 0 imaginary -> dynamically stable
+  L1_0 NiAl                          Ef= -659.3 meV  B= 170.9 GPa  minCeig=  32.7 GPa  MD  600K: dEq=   0.0 meV shift=0.00 A  => STABLE (on hull, mechanically + thermally + dynamically stable)
+                                     phonons 3x3x4: 36 q, min -0.000 max 10.415 THz, 0 imaginary -> dynamically stable
+
+1540 worker evaluations (worker log: /tmp/nial_mace_search.log)
+
+wrote results/NiAl_mace/report.json and 16 structures (POSCAR + extxyz) in 1446.0 s
+
+real	24m7.192s
+user	58m49.917s
+sys	28m58.080s
+[worker] mace model file mace-mpa-0-medium.model  sha256 75428afe3a1d7d8062e19bcaabd5c433623cabf308242ec9fb493e38604fb638  79462305 bytes
+[worker] mace-torch 0.3.17, torch 2.15.0+cu132, ase 3.30.0, 4 thread(s), device cpu
+[worker] started mace(mace-mpa-0-medium.model)

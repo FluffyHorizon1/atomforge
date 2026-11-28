@@ -1,3 +1,6 @@
+# Note added with the Ni-Al work: the k=3 run below is spin-restricted with 3 electrons on 27 k-points, an odd total.
+# PySCF's smeared KRKS then computes 82 electrons (3.037 per cell), a charged cell, so E = -2.011505 Ha is not the energy
+# of fcc Al (the unrestricted run gives -2.024568 Ha). The timings stand. quantum/worker.py now refuses such a run.
 /usr/local/lib/python3.13/site-packages/pyscf/pbc/gto/cell.py:1407: UserWarning: Electron number 3 and spin 0 are not consistent in cell
 
   warnings.warn('Electron number %d and spin %d are not consistent '

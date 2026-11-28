@@ -82,9 +82,12 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
   Cu₃Au lattice constant and, on a reduced search, that L1₂ Cu₃Au is bound and the hull is consistent. The full
   Cu–Au result above is a recorded run in `results/`, not a test.)
 * **Cu–Ag:** all formation energies positive, so immiscible, as observed (recorded run in `results/`, not a test).
-* **Ni–Al: fails.** The generic mixing rule gives formation energies near zero or positive (B2 NiAl: +0.07 eV/atom),
-  where experiment gives about −0.6 eV/atom.
-  Strongly bonding intermetallics need quantum-level (DFT) energies. That is the next rung.
+* **Ni–Al: fails with the EAM.** The generic mixing rule gives formation energies near zero or positive (B2 NiAl: +0.07
+  eV/atom), where experiment gives about −0.6 eV/atom.
+  Strongly bonding intermetallics need quantum-level energies. Through the external-potential bridge the sign and the size
+  come out right: a MACE foundation model (a machine-learned potential fitted to PBE data, not DFT itself) gives B2 NiAl
+  −0.66 eV/atom and L1₂ Ni₃Al −0.43 eV/atom, both on the hull and stable in every screen. See
+  [Ni–Al through the bridge](#nial-through-the-bridge) for the runs, and for what the direct DFT calculation did and did not reach.
   The failure is pinned, not hidden: `eam_nial` asserts the current known-bad numbers (and fails if they change), and
   [docs/EAM_LIMITATIONS.md](docs/EAM_LIMITATIONS.md) lists it with the other EAM limitations and the QPU-stack materials the
   EAM cannot treat at all (no O, N, Si or Nb parameters).
@@ -113,6 +116,8 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `external_locale` [unit, external] | JSON numbers and a whole handshake under a de_DE decimal-comma locale, generated with `localedef` into a temporary `LOCPATH`; skipped if that is not possible |
 | `external_cli_args` [cli, external] | `relax` argument and failure exit codes: 1 for usage and argument errors (including a bad `--potential`), 2 for failures while running (no python3 needed) |
 | `external_search` [physics, external, slow] | `binary_search` through the `lj` worker reproduces the native LJ search exactly; `report.json` names the backend and carries `screen.phonons`; full reduced pipeline (MC included) on the native LJ |
+| `external_pyscf` [physics, external, pyscf, slow] | periodic DFT through the bridge on the 1-atom cell of fcc Al (PBE, gth-szv, 2×2×2 k-points): regression energy, zero force, isotropic virial, virial against a finite strain (1%), a hydrostatic FIRE relaxation driven by the DFT stress, the spin-polarised path against the restricted one, and the refusal of an odd electron count. About 4 minutes on 2 threads |
+| `external_mace` [physics, external, mace, slow] | a MACE model through the bridge: forces and virial against finite differences on rattled, sheared B2 NiAl; lattice constants of Ni, Al and NiAl; B2 NiAl formation energy between −0.85 and −0.5 eV/atom |
 | `phonons` [physics, phonons] | fcc Cu (EAM) stable, acoustic modes 0 at Γ, X-point frequencies vs experiment, supercell convergence; bcc Cu imaginary at N |
 | `phonons_basis` [unit, phonons] | 4-atom cubic fcc vs 1-atom primitive at q + G; L1₂ Cu₃Au (unequal masses) vs its doubled cell with a reordered basis |
 | `phonons_asr` [unit, phonons] | the sum-rule violation before correction: 1e-13 for the EAM, the finite-difference value for a synthetic egg box |
@@ -127,8 +132,11 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 
 It does not cover the Monte Carlo ordering search beyond the reduced hull and CLI runs, or MD thermodynamics beyond the
 shift-invariance check.
-The `external*` groups need `python3` and are reported as skipped (exit 77) without it; they do not run the `pyscf` or
-`mace` backends.
+The `external*` groups need `python3` and are reported as skipped (exit 77) without it. `external_pyscf` is also skipped
+without the `pyscf` module, and `external_mace` without `mace-torch` or without a model file named by
+`ATOMFORGE_MACE_MODEL`. CI runs these two in jobs of their own (`pyscf backend`, `mace backend`), which install the
+packages (`pip install pyscf==2.15.1`; torch 2.15.0 CPU and `mace-torch==0.3.17`), fetch `mace-mpa-0-medium.model` from
+the ACEsuit GitHub release, verify its SHA-256, cache it, and fail if the test is skipped.
 
 ## Toward the quantum level
 
@@ -149,8 +157,8 @@ wrong shape or a NaN raises `ExternalPotentialError` with the end of that log; i
 | backend | what it is | needs |
 |---------|------------|-------|
 | `lj` | the truncated-and-shifted Lennard-Jones of `include/atomforge/lj.hpp`, pure Python with periodic images | python3 |
-| `pyscf` | periodic Kohn–Sham DFT with the probe's settings; analytic forces and stress | numpy, pyscf |
-| `mace` | the MACE foundation model through ASE | numpy, ase, mace-torch |
+| `pyscf` | periodic Kohn–Sham DFT with the probe's settings; analytic forces and stress; `--spin-polarised`, `--multigrid`, `--ke-cutoff` | numpy, pyscf |
+| `mace` | a MACE foundation model through ASE (`--model` name or file); a machine-learned potential, not DFT | numpy, ase, mace-torch |
 
 From the command line:
 
@@ -165,8 +173,8 @@ From the command line:
 Both LJ runs above give E = -0.07762 eV/atom and V = 36.5108 Å³/atom in 33 FIRE steps (34 worker calls). For external
 potentials the elastic tensor is off by default (`--elastic` turns it on), because it costs at least 24 more evaluations (12 strained cells, each with an internal relaxation; 24 for fcc Ar with the `lj` worker).
 `--worker-timeout S` bounds each evaluation (default 3600 s; `inf` for none). `--worker-hello-timeout S` bounds the
-start-up and handshake (default 60 s; MACE downloads its model then). The `pyscf` backend is spin-restricted, so Fe, Co and
-Ni come out non-magnetic. `relax` exits with 0 on success, 1 on usage and argument errors (unknown option or prototype, bad
+start-up and handshake (default 60 s; MACE downloads its model then; `relax` only). The `pyscf` backend is spin-restricted
+unless `--spin-polarised` is given, so Fe, Co and Ni come out non-magnetic by default. `relax` exits with 0 on success, 1 on usage and argument errors (unknown option or prototype, bad
 value, extra arguments), and 2 on failures while running (unsupported element, a worker that fails), as `search` does.
 
 In the tests, the bridge with the `lj` worker reproduces the native LJ energy, forces and virial to better than 1e-9 (the
@@ -178,7 +186,69 @@ gth-szv, 2×2×2 k-points, log in `results/pyscf_bridge_fd_log.txt`): the trace 
 -0.6367 eV by finite strain, and a force on a displaced atom -0.11778 eV/Å analytic and -0.11777 eV/Å by finite
 displacement. With Fermi smearing the worker returns the free energy E - σS, because that is what PySCF's forces and
 stress are derivatives of; returning E instead put the virial off by a factor of 1.9. One evaluation took 26 s for the
-1-atom cell and 131 s for the 4-atom cell on 2 threads. The CI tests do not install PySCF or MACE.
+1-atom cell and 131 s for the 4-atom cell on 2 threads. CI runs both optional backends in jobs of their own (see
+[Testing](#testing)).
+
+### Ni–Al through the bridge
+
+<a id="nial-through-the-bridge"></a>
+Two different things were run through `ExternalPotential` for Ni–Al, and they must not be confused. **MACE** is a
+machine-learned interatomic potential trained on PBE calculations; it is cheap enough for relaxations, phonons and a
+search, and its numbers are predictions of a fitted model. **PySCF** is the DFT calculation itself (PBE, GTH
+pseudopotentials); it is exact for its functional only when converged in basis set and k-points.
+
+**MACE** (`quantum/run_nial_mace.sh`; records `results/NiAl_mace_mpa0_relax.txt` and `results/NiAl_mace_mp0_relax.txt`;
+mace-torch 0.3.17, torch 2.15.0, ASE 3.30.0, CPU, 4 threads, 2026-11-28). Each line is
+`atomforge relax <prototype> ... --fmax 0.001 --elastic --phonons --potential external:"python3 quantum/worker.py mace --model FILE --threads 4"`.
+The two models are `mace-mpa-0-medium.model` (SHA-256 `75428afe…4fb638`) and MACE-MP-0 medium,
+`2023-12-03-mace-128-L1_epoch-199.model` (SHA-256 `01bfe221…d35845`), both from the ACEsuit `mace-mp` GitHub releases; the
+full hashes are in the records.
+
+| | mace-mpa-0 | MACE-MP-0 | PBE, published | experiment |
+|---|---|---|---|---|
+| fcc Ni, a (Å) | 3.521 | 3.510 | | 3.524 |
+| fcc Al, a (Å) | 4.039 | 4.061 | | 4.050 |
+| B2 NiAl, a (Å) | 2.885 | 2.883 | 2.898 | 2.887 |
+| L1₂ Ni₃Al, a (Å) | 3.561 | 3.556 | 3.582 | 3.57 |
+| B2 NiAl, formation energy (eV/atom) | −0.659 | −0.692 | −0.677 | −0.685 (−0.60 to −0.70) |
+| L1₂ Ni₃Al, formation energy (eV/atom) | −0.426 | −0.476 | −0.441 | −0.428 (−0.39 to −0.43) |
+| reference energies Ni, Al (eV/atom) | −5.787, −3.740 | −5.732, −3.728 | | |
+
+The published PBE values are from Lechermann, Fähnle and Sanchez, Intermetallics 13, 1096 (2005) (arXiv:cond-mat/0410285,
+tables 1 and 2: mixed-basis pseudopotential calculations, Ni₃Al ferromagnetic). The experimental formation energies are
+enthalpies of formation measured by aluminium-solution calorimetry at 298–300 K: B2 AlNi −66.1 ± 1.3 and L1₂ AlNi₃
+−41.3 ± 1.3 kJ/mol of atoms (direct-reaction calorimetry: −65.7 ± 1.1 and −39.4 ± 0.6). They are taken from tables 7.1.2,
+7.1.3, 7.3.2 and 7.3.3 of K. Rzyman, Z. Moser and J.-C. Gachon, "Calorimetric studies of the intermetallic compounds from
+Al-Ti and Al-Ni systems", monograph chapter, pp. 93–146, read as the PDF in the RCIN repository of the Polish Academy of
+Sciences (https://rcin.org.pl/ippt/Content/67610/PDF/WA727_25873_55602_Rzyman-Calorimetric.pdf; the enclosing volume
+could not be confirmed from the PDF; its newest references are from 2004). The AlNi₃ solution values, −41.3 to −42.3
+kJ/mol between 300 and 1123 K, were first published by Rzyman et al., J. Phase Equilibria 17, 173 (1996). The earlier
+measurements the chapter tabulates (tables 7.1.4 and 7.3.4) span −58.3 to −67.4 kJ/mol of atoms for AlNi and −37.6 to
+−40.6 for AlNi₃, the ranges in brackets above; that spread across methods, not the ± of one method, is the experimental
+uncertainty. Room-temperature enthalpies are compared here with 0 K energies without zero-point motion.
+The experimental lattice constants of Ni and Al are those of `atomforge validate`. The two models differ by 0.03 eV/atom
+for NiAl and 0.05 eV/atom for Ni₃Al, and both lie within 0.04 eV/atom of the published PBE values and of the
+calorimetric values. That spread, about 0.05 eV/atom, is the honest error bar on the MACE numbers; the Zhou04 EAM is off
+by 0.7 eV/atom.
+
+All four phases are Born-stable and have no imaginary phonon on the commensurate grid with both models (mace-mpa-0, in GPa:
+Ni C11 = 290, C12 = 178, C44 = 136; Al 115, 65, 29; NiAl 214, 149, 117; Ni₃Al 199, 136, 124; phonons on 3×3×3 supercells
+of the 4-atom cells and 4×4×4 of the B2 cell, highest mode 8.0, 7.9, 10.4 and 9.3 THz). The four relaxations with elastic
+constants and phonons take about 2 minutes per model.
+
+The search (`results/NiAl_mace_run.txt`, `results/NiAl_mace/`):
+
+```bash
+./build/atomforge search Ni Al --out results/NiAl_mace --no-ss --no-mc --md-steps 300 --phonons \
+    --potential external:"python3 quantum/worker.py mace --model mace-mpa-0-medium.model --threads 4"
+```
+
+It made 1540 worker evaluations in 24 minutes. The hull has L1₂ Ni₃Al (−426 meV/atom) and NiAl (−659 meV/atom), both
+`STABLE (on hull, mechanically + thermally + dynamically stable)`. Its limits: it is reduced to the ordered prototypes,
+because the 27 solid-solution relaxations on 48-site cells had not finished after 70 minutes on this machine and the Monte
+Carlo stage would need about 4e5 evaluations; the MD screen is 300 steps; the L1₀ prototype relaxes into B2 (c/a → the
+bcc value, same energy), so the hull point is listed as `L1_0 NiAl`; and the prototype list has none of the Al-rich Ni–Al
+structures (D0₁₁ NiAl₃, D5₁₃ Ni₂Al₃), so nothing can be concluded for x(Al) > 0.5.
 
 ### The whole search through any potential
 
