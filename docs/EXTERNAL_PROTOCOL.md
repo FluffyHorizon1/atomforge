@@ -6,15 +6,31 @@ PySCF, GPAW, Quantum ESPRESSO or a machine-learned potential, or a compiled prog
 
 ## Process model
 
+- Platforms: POSIX systems with `/bin/sh` (Linux and macOS; tested on Linux). It uses fork/exec, a Unix socket pair and
+  pipes. `close_range` is used where the kernel has it and a loop over the descriptor limit elsewhere; `SO_NOSIGPIPE`
+  replaces `MSG_NOSIGNAL` where the latter is missing. Numbers go through floating-point `std::to_chars`/`from_chars` when
+  the standard library has them, and through classic-locale streams otherwise.
 - atomforge starts the worker once, when the `ExternalPotential` is constructed, as `/bin/sh -c "exec <command>"`. The
   `exec` is left out when the command contains shell operators (`; & | < > ( ) $` or a backtick) or starts with a builtin
-  such as `cd`, so `cd quantum && python3 worker.py lj` works. The worker stays alive for every evaluation of a relaxation
-  or search and is told to exit when the potential is destroyed.
-- Between atomforge and the worker sits a small supervisor process. It leads a process group of its own that contains the
-  worker and everything the worker starts. When the worker ends, the supervisor ends the same way, so atomforge sees the
-  worker's exit status or signal. When atomforge goes away for any reason (Ctrl-C, `timeout`, SIGHUP, SIGKILL, a crash), the
-  supervisor kills the whole group within about 0.1 s. Because the group is not the terminal's, Ctrl-C reaches the worker
-  only this way. `quantum/worker.py` also exits by itself when its parent disappears.
+  such as `cd`, so `cd quantum && python3 worker.py lj` works. A command that starts with variable assignments
+  (`OMP_NUM_THREADS=1 python3 ...`, the usual way to set DFT thread counts) is run as `exec env ...`. The worker stays
+  alive for every evaluation of a relaxation or search and is told to exit when the potential is destroyed.
+- atomforge forks once and immediately execs a supervisor: `/bin/sh` running a short script. The supervisor shares no
+  memory, descriptors or signal handlers with the host. Before the exec the child resets every signal disposition to the
+  default, clears the signal mask and closes every descriptor except the five it passes on: /dev/null, the log, the socket
+  and a "lifeline" pipe whose only write end the host keeps. The supervisor leads a process group of its own, which
+  contains the worker and everything the worker starts.
+  - When the worker ends, the supervisor ends the same way: with the same exit status, or by re-raising the same signal
+    with core dumps turned off. atomforge therefore reports the worker's own status (`exit status N` or
+    `killed by signal N`). A worker that exits normally with a status between 129 and 159 is indistinguishable from one
+    killed by a signal.
+  - When the host goes away for any reason (normal exit, Ctrl-C, `timeout`, SIGHUP, SIGKILL, a crash), the lifeline reads
+    end of file and the supervisor's watcher kills the whole group at once.
+  - The group is not the terminal's, so Ctrl-C reaches the worker only this way. As a background job of a non-interactive
+    shell, the worker also starts with SIGINT and SIGQUIT ignored.
+  - `quantum/worker.py` additionally exits by itself when its parent process disappears. Its watchdog is a Python thread,
+    so a worker stuck inside a call that holds the GIL notices only when the call returns (about 3.5 s in the reviewer's
+    probe). The supervisor's group kill does not depend on it.
 - The worker's stdin and stdout are one end of a Unix socket pair. Each message is one JSON object on one line, terminated by
   `\n`. The worker must flush after every reply and must not write anything else to that channel. `worker.py` keeps a
   private copy of fd 1 for replies and points fd 1 and `sys.stdout` at stderr before importing a backend, so library output

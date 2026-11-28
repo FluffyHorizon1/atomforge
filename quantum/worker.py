@@ -274,7 +274,8 @@ def send(obj):
 
 def watchdog():
     """Exit when the parent (atomforge) goes away, even in the middle of a long evaluation. Covers systems without
-    PR_SET_PDEATHSIG and commands where a shell sits between atomforge and this process."""
+    PR_SET_PDEATHSIG and commands where a shell sits between atomforge and this process. It is a Python thread, so a
+    call that holds the GIL delays it until the call returns; atomforge's supervisor kills the process group regardless."""
     parent = os.getppid()
 
     def run():
