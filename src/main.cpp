@@ -22,7 +22,8 @@ static void usage() {
               "  atomforge elements\n"
               "  atomforge validate\n"
               "  atomforge relax <prototype> <A> [B] [--potential eam|lj[:eps,sigma,rc]|external:CMD] [--volume V]\n"
-              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--worker-timeout S] [--worker-log PATH]\n"
+              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--worker-timeout S]\n"
+              "                 [--worker-hello-timeout S] [--worker-log PATH]\n"
               "                                          prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
               "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick] [--materials]");
 }
@@ -68,8 +69,11 @@ static int cmd_relax(int argc, char** argv) {
     std::string spec = "eam";
     ExternalOptions xo;
     double volume = 0, fmax = 1e-3;
-    int elastic = -1;   // -1: default (on for eam/lj, off for external, where it costs ~25 more evaluations)
+    int elastic = -1;   // -1: default (on for eam/lj, off for external, where it costs at least 24 more evaluations)
     CellMode cell = CellMode::Full;
+    // Exit status, as for `search`: 1 for usage and argument errors (unknown option, bad value, unknown prototype, extra
+    // arguments), 2 for failures while running (unsupported element, worker failure); see main().
+    try {
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         auto val = [&]() -> std::string {
@@ -86,7 +90,8 @@ static int cmd_relax(int argc, char** argv) {
         if (a == "--potential") spec = val();
         else if (a == "--volume") volume = num(0);
         else if (a == "--fmax") fmax = num(0);
-        else if (a == "--worker-timeout") xo.eval_timeout_s = num(0);
+        else if (a == "--worker-timeout") xo.eval_timeout_s = num(0);            // inf (or >= 1e9 s): no deadline
+        else if (a == "--worker-hello-timeout") xo.hello_timeout_s = num(0);
         else if (a == "--worker-log") xo.log_path = val();
         else if (a == "--elastic") elastic = 1;
         else if (a == "--no-elastic") elastic = 0;
@@ -102,18 +107,23 @@ static int cmd_relax(int argc, char** argv) {
             return 1;
         } else pos.push_back(a);
     }
-    if (pos.size() < 2 || pos.size() > 3) { usage(); return 1; }
+    } catch (const std::runtime_error& e) {
+        std::fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
+    if (pos.size() > 3) { std::fprintf(stderr, "error: unexpected argument %s\n", pos[3].c_str()); usage(); return 1; }
+    if (pos.size() < 2) { usage(); return 1; }
     const std::string proto = pos[0], A = pos[1], B = pos.size() > 2 ? pos[2] : pos[1];
     const std::vector<std::string> els = A == B ? std::vector<std::string>{A} : std::vector<std::string>{A, B};
     const int ib = A == B ? 0 : 1;
     const auto protos = prototypes();
     const Prototype* P = nullptr;
     for (const auto& p : protos) if (p.name.rfind(proto, 0) == 0) { P = &p; break; }
-    if (!P) { std::fprintf(stderr, "unknown prototype %s\n", proto.c_str()); return 1; }
+    if (!P) { std::fprintf(stderr, "error: unknown prototype %s\n", proto.c_str()); return 1; }
+    // The potential first: for eam an unsupported element is reported by ZhouEAM itself ("no parameters for Xx").
+    const auto pot = make_potential(spec, els, xo);
     if (volume == 0 && (!ZhouEAM::lookup(A) || !ZhouEAM::lookup(B)))
         throw std::runtime_error("no Zhou04 reference volume for " + (ZhouEAM::lookup(A) ? B : A) + ": pass --volume (A^3/atom)");
-
-    const auto pot = make_potential(spec, els, xo);
     Structure s = P->build(0, ib);
     detail::scale_to_volume(s, volume > 0 ? volume : detail::vegard_volume(A, B, s.fraction(ib)));
     const auto t0 = std::chrono::steady_clock::now();
