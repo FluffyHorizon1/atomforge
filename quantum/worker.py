@@ -213,12 +213,30 @@ class PySCF:
 
 
 class MACE:
-    """MACE foundation model through ASE (optional)."""
+    """MACE foundation model through ASE (optional). A machine-learned interatomic potential fitted to DFT data; not DFT."""
 
     def __init__(self, o):
+        import ase
+        import mace
+        import torch
         from mace.calculators import mace_mp
+        if o.threads:
+            torch.set_num_threads(o.threads)
+        # --model is a name known to mace_mp ("medium", "medium-mpa-0", ...), which downloads the file on first use, or
+        # the path of a model file. The file's SHA-256 goes to the log, so that a recorded run identifies its model.
         self.calc = mace_mp(model=o.model, device=o.device, default_dtype="float64")
-        self.name = "mace(%s)" % o.model
+        label = o.model
+        if os.path.isfile(o.model):
+            import hashlib
+            h = hashlib.sha256()
+            with open(o.model, "rb") as f:
+                for block in iter(lambda: f.read(1 << 20), b""):
+                    h.update(block)
+            label = os.path.basename(o.model)
+            log("mace model file %s  sha256 %s  %d bytes" % (label, h.hexdigest(), os.path.getsize(o.model)))
+        log("mace-torch %s, torch %s, ase %s, %d thread(s), device %s"
+            % (mace.__version__, torch.__version__, ase.__version__, torch.get_num_threads(), o.device))
+        self.name = "mace(%s)" % label
         self.cutoff = 0.0
 
     def masses(self, elements):
