@@ -91,6 +91,9 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `external_relax` [physics, external] | FIRE with full cell through the bridge: same steps, energy and volume as the native run; residual force and stress |
 | `external_errors` [unit, external] | missing worker, early exit, handshake timeout, wrong protocol, crash, hang, NaN, wrong shape, bad JSON, wrong id, worker-side error, stderr log |
 | `external_cli` [cli, external] | `atomforge relax --potential external:...` end to end against `--potential lj`, and its error exits |
+| `external_json` [unit, external] | the protocol's JSON reader and number formatting (no python3 needed) |
+| `external_locale` [unit, external] | JSON numbers and a whole handshake under a de_DE decimal-comma locale, generated with `localedef` into a temporary `LOCPATH`; skipped if that is not possible |
+| `external_cli_args` [cli, external] | `relax` argument and failure exit codes: 1 for usage and argument errors (including a bad `--potential`), 2 for failures while running (no python3 needed) |
 | `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
 | `structure_misc` [unit] | composition, fraction and supercell bookkeeping; errors for unknown elements, prototypes and parent lattices |
 | `io` [unit] | writers throw `cannot write` on unwritable paths; POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
