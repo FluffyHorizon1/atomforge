@@ -45,6 +45,9 @@ static int cmd_validate() {
     return S.passed() ? 0 : 1;
 }
 
+// A bad command-line value detected after option parsing (exit status 1, like other argument errors).
+struct UsageError : std::runtime_error { using std::runtime_error::runtime_error; };
+
 // --potential SPEC:  eam (default) | lj[:eps,sigma,rc] | external:<command>   (see docs/EXTERNAL_PROTOCOL.md)
 static std::unique_ptr<Potential> make_potential(const std::string& spec, const std::vector<std::string>& els, const ExternalOptions& xo) {
     if (spec == "eam") return std::make_unique<ZhouEAM>(els);
@@ -54,17 +57,17 @@ static std::unique_ptr<Potential> make_potential(const std::string& spec, const 
             double v[3];
             char tail = 0;
             if (std::sscanf(spec.c_str() + 3, "%lf,%lf,%lf%c", &v[0], &v[1], &v[2], &tail) != 3)
-                throw std::runtime_error("--potential lj:EPS,SIGMA,RC expects three numbers (eV, A, A), got '" + spec + "'");
+                throw UsageError("--potential lj:EPS,SIGMA,RC expects three numbers (eV, A, A), got '" + spec + "'");
             p.epsilon = v[0]; p.sigma = v[1]; p.rc = v[2];
         }
-        return std::make_unique<LennardJones>(els, p);
+        try { return std::make_unique<LennardJones>(els, p); } catch (const std::runtime_error& e) { throw UsageError(e.what()); }
     }
     if (spec.rfind("external:", 0) == 0) {
         const std::string cmd = spec.substr(9);
-        if (cmd.find_first_not_of(" \t") == std::string::npos) throw std::runtime_error("--potential external: needs a worker command");
+        if (cmd.find_first_not_of(" \t") == std::string::npos) throw UsageError("--potential external: needs a worker command");
         return std::make_unique<ExternalPotential>(cmd, els, xo);
     }
-    throw std::runtime_error("unknown --potential '" + spec + "' (expected eam, lj[:eps,sigma,rc] or external:<command>)");
+    throw UsageError("unknown --potential '" + spec + "' (expected eam, lj[:eps,sigma,rc] or external:<command>)");
 }
 
 static int cmd_relax(int argc, char** argv) {
@@ -312,7 +315,8 @@ int main(int argc, char** argv) {
         if (cmd == "validate") return cmd_validate();
         if (cmd == "relax") return cmd_relax(argc, argv);
         if (cmd == "search") return cmd_search(argc, argv);
-    } catch (const std::exception& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 2; }
+    } catch (const UsageError& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 1; }
+    catch (const std::exception& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 2; }
     usage();
     return 1;
 }

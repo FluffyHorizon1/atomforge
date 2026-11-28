@@ -18,13 +18,15 @@
 // JSON, a wrong id, missing fields, the wrong number of atoms or vectors, or any non-finite number makes evaluate() throw
 // ExternalPotentialError. The message includes the tail of the worker's stderr log. A worker that failed is killed and is not
 // restarted: later calls throw too. A reply {"id":N,"error":"..."} also throws, but leaves the worker running (an SCF that
-// did not converge should not end a search). POSIX only (fork/exec, socketpair, poll). One request at a time: a
-// concurrent evaluate() from a second thread throws.
+// did not converge should not end a search). POSIX systems with /bin/sh (Linux, macOS; tested on Linux): fork/exec,
+// socketpair, pipe, poll. The worker runs under an exec'd /bin/sh supervisor (see supervisor_script()).
+// One request at a time: a concurrent evaluate() from a second thread throws.
 #pragma once
 #include "potential.hpp"
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <locale>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -38,11 +40,28 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <sys/resource.h>
 #include <sys/socket.h>
+#if defined(__linux__)
+#include <sys/syscall.h>
+#endif
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
+
+#if defined(MSG_NOSIGNAL)
+#define ATOMFORGE_MSG_NOSIGNAL MSG_NOSIGNAL
+#else
+#define ATOMFORGE_MSG_NOSIGNAL 0   // e.g. macOS: SO_NOSIGPIPE is set on the socket instead
+#endif
+// Floating-point std::from_chars / std::to_chars (libstdc++ 11+, MSVC, recent libc++); otherwise streams in the classic
+// locale, which are just as locale independent.
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+#define ATOMFORGE_FP_CHARCONV 1
+#else
+#define ATOMFORGE_FP_CHARCONV 0
+#endif
 
 namespace atomforge {
 
@@ -145,9 +164,19 @@ private:
             const char* b = s_.data() + i_;
             const char* e = s_.data() + s_.size();
             v.type = Value::Type::Number;
+#if ATOMFORGE_FP_CHARCONV
             const auto res = std::from_chars(b, e, v.num, std::chars_format::general);
             if (res.ec != std::errc() || res.ptr == b) fail("bad number '" + s_.substr(i_, 24) + "'");
             i_ += std::size_t(res.ptr - b);
+#else
+            std::size_t n = 0;
+            while (b + n < e && std::strchr("+-.eE0123456789", b[n]) && b[n] != '\0') ++n;
+            std::istringstream is(std::string(b, n));
+            is.imbue(std::locale::classic());
+            is >> v.num;
+            if (!is || is.peek() != std::char_traits<char>::eof()) fail("bad number '" + s_.substr(i_, 24) + "'");
+            i_ += n;
+#endif
             if (i_ < s_.size() && s_[i_] != '\0' && std::strchr(".eE+-0123456789", s_[i_])) fail("bad number '" + s_.substr(std::size_t(b - s_.data()), 24) + "'");
         } else fail(std::string("unexpected character '") + c + "'");
         --depth_;
@@ -200,9 +229,17 @@ inline std::string quote(const std::string& s) {
 }
 // Shortest representation that round-trips (std::to_chars: locale independent).
 inline std::string num(double x) {
+#if ATOMFORGE_FP_CHARCONV
     char b[64];
     const auto res = std::to_chars(b, b + sizeof b, x);
     return std::string(b, res.ptr);
+#else
+    std::ostringstream o;
+    o.imbue(std::locale::classic());
+    o.precision(17);
+    o << x;
+    return o.str();
+#endif
 }
 
 } // namespace json
@@ -240,6 +277,7 @@ public:
     const std::string& log_path() const { return opt_.log_path; }
     long evaluations() const { return next_id_ - 1; }
     bool alive() const { return pid_ > 0; }
+    pid_t supervisor_pid() const { return pid_; }   // leader of the worker's process group (for tests and diagnostics)
 
     EvalResult evaluate(const Structure& s, NeighborList&) const override {
         // One worker serves one request at a time. atomforge's relax / search / phonons call evaluate() sequentially; a
@@ -303,6 +341,7 @@ private:
     mutable pid_t pid_ = -1;
     mutable pid_t pgid_ = -1;    // the worker's process group (= its pid at spawn)
     mutable int fd_ = -1;        // our end of the socketpair (worker stdin+stdout)
+    mutable int lifeline_ = -1;  // write end of the supervisor's lifeline pipe (closing it ends the worker's group)
     mutable std::string rbuf_;
     mutable long next_id_ = 1;
     mutable std::atomic<bool> busy_{false};
@@ -323,8 +362,35 @@ private:
         static const char* builtins[] = {"cd", "export", "set", "unset", ".", "source", "eval", "ulimit", "umask", "exec", "alias"};
         bool builtin = false;
         for (const char* w : builtins) builtin = builtin || first == w;
-        return plain && !builtin ? "exec " + cmd : cmd;
+        if (!plain || builtin) return cmd;
+        // "OMP_NUM_THREADS=1 python3 ..." : exec cannot take an assignment, env can
+        const std::size_t eq = first.find('=');
+        const bool assign = eq != std::string::npos && eq > 0 && first.find_first_not_of(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") == eq && !(first[0] >= '0' && first[0] <= '9');
+        return (assign ? "exec env " : "exec ") + cmd;
     }
+
+    // The supervisor: /bin/sh running this script, as the leader of a new process group. fd 3 is the read end of a
+    // "lifeline" pipe whose only write end atomforge holds; fd 4 is the worker's end of the socket; $1 is the worker
+    // command. It starts the worker and a watcher that reads the lifeline. When atomforge exits for any reason (normal
+    // exit, Ctrl-C, timeout, SIGHUP, SIGKILL, a crash) the lifeline reads end of file and the watcher kills the whole
+    // group at once. When the worker ends, the supervisor ends the same way (same exit status, or the same signal with
+    // core dumps off), so atomforge sees the worker's own status. A shell's background job would get /dev/null as stdin,
+    // hence the explicit fd 4 redirections. Being an exec'd shell, it shares no memory, descriptors or signal handlers
+    // with the host process.
+    static const char* supervisor_script() {
+        return "w=$1\n"
+               "/bin/sh -c \"$w\" 0<&4 1>&4 3<&- 4<&- &\n"
+               "pid=$!\n"
+               "( exec 0<&3 1>/dev/null 3<&- 4<&-; cat; kill -KILL 0 ) &\n"
+               "watch=$!\n"
+               "exec 3<&- 4<&- 0</dev/null 1>/dev/null\n"
+               "wait \"$pid\"; s=$?\n"
+               "kill \"$watch\" 2>/dev/null\n"
+               "if [ \"$s\" -gt 128 ] && [ \"$s\" -lt 160 ]; then ulimit -c 0; trap - $((s - 128)) 2>/dev/null; kill -$((s - 128)) $$; fi\n"
+               "exit \"$s\"\n";
+    }
+    static void set_cloexec(int fd) { ::fcntl(fd, F_SETFD, ::fcntl(fd, F_GETFD) | FD_CLOEXEC); }
 
     void start() {
         // The log is opened here, so an unusable path is reported as such (not as a missing worker command).
@@ -333,59 +399,61 @@ private:
         const std::string head = "=== atomforge ExternalPotential (pid " + std::to_string(::getpid()) + "): " + cmd_ + "\n";
         if (::write(logfd, head.data(), head.size()) < 0) { /* the log is best effort */ }
         log_offset_ = long(::lseek(logfd, 0, SEEK_END));
-        int sv[2];
-        if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0) {
+        int sv[2] = {-1, -1}, life[2] = {-1, -1};
+        if (::socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0 || ::pipe(life) != 0) {
             const int e = errno;
-            ::close(logfd);
-            throw ExternalPotentialError(std::string("socketpair failed: ") + std::strerror(e));
+            for (int f : {sv[0], sv[1], life[0], life[1], logfd}) if (f >= 0) ::close(f);
+            throw ExternalPotentialError(std::string("cannot create the worker channel: ") + std::strerror(e));
         }
+        for (int f : {sv[0], sv[1], life[0], life[1]}) set_cloexec(f);
+#if defined(SO_NOSIGPIPE)
+        { const int one = 1; ::setsockopt(sv[0], SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one); }
+#endif
         // Everything the child needs is prepared before fork(): it only makes async-signal-safe calls.
-        const std::string shcmd = shell_command(cmd_);
-        char a0[] = "sh", a1[] = "-c";
-        std::vector<char> c(shcmd.begin(), shcmd.end()); c.push_back('\0');
-        char* argv[] = {a0, a1, c.data(), nullptr};
-        const pid_t parent = ::getpid();
+        const std::string w = shell_command(cmd_);
+        std::vector<char> script(supervisor_script(), supervisor_script() + std::strlen(supervisor_script()) + 1);
+        std::vector<char> wc(w.begin(), w.end()); wc.push_back('\0');
+        char a0[] = "sh", a1[] = "-c", a3[] = "atomforge-supervisor";
+        char* argv[] = {a0, a1, script.data(), a3, wc.data(), nullptr};
+        struct rlimit rl{};
+        const long maxfd = (::getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) ? long(std::min<rlim_t>(rl.rlim_cur, 1 << 20)) : 65536;
         const pid_t pid = ::fork();
         if (pid < 0) {
             const int e = errno;
-            ::close(sv[0]); ::close(sv[1]); ::close(logfd);
+            for (int f : {sv[0], sv[1], life[0], life[1], logfd}) ::close(f);
             throw ExternalPotentialError(std::string("cannot start worker (fork failed): ") + std::strerror(e));
         }
         if (pid == 0) {
-            // Supervisor (async-signal-safe calls only). It leads a new process group, starts the worker in it, and then
-            //  - when the worker ends, ends the same way (exit status, or the same signal), so atomforge sees the worker's
-            //    own status;
-            //  - when atomforge goes away (Ctrl-C, timeout, SIGHUP, SIGKILL, a crash), kills the whole group.
-            // The group lets kill_worker() reach everything the worker started (shell pipelines, MPI ranks). Being outside
-            // the terminal's group means Ctrl-C does not reach the worker directly; the parent check covers that.
             ::setpgid(0, 0);
-            if (::getppid() != parent) ::_exit(127);
-            ::dup2(sv[1], STDIN_FILENO);
-            ::dup2(sv[1], STDOUT_FILENO);
-            ::dup2(logfd, STDERR_FILENO);
-            const pid_t w = ::fork();
-            if (w < 0) ::_exit(127);
-            if (w == 0) {
-                ::execv("/bin/sh", argv);
-                ::_exit(127);
+            // default signal dispositions and an empty mask (exec keeps ignored signals and the mask otherwise: a host
+            // that ignores SIGCHLD would break the supervisor's wait)
+            for (int sig = 1; sig < NSIG; ++sig) {
+                struct sigaction sa{};
+                sa.sa_handler = SIG_DFL;
+                sigemptyset(&sa.sa_mask);
+                ::sigaction(sig, &sa, nullptr);
             }
-            // the supervisor keeps no end of the socket, so the worker's own exit closes it
-            ::close(STDIN_FILENO); ::close(STDOUT_FILENO); ::close(sv[0]); ::close(sv[1]); ::close(logfd);
-            for (;;) {
-                int st = 0;
-                if (::waitpid(w, &st, WNOHANG) == w) {
-                    if (WIFSIGNALED(st)) { ::signal(WTERMSIG(st), SIG_DFL); ::kill(::getpid(), WTERMSIG(st)); }
-                    ::_exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
-                }
-                if (::getppid() != parent) { ::kill(0, SIGKILL); ::_exit(1); }   // atomforge is gone: the whole group
-                ::usleep(100000);
-            }
+            sigset_t none; sigemptyset(&none); ::sigprocmask(SIG_SETMASK, &none, nullptr);
+            // fds: 0, 1 /dev/null, 2 the log, 3 the lifeline, 4 the socket; nothing else of the host's survives
+            const int hi_log = ::fcntl(logfd, F_DUPFD, 10), hi_life = ::fcntl(life[0], F_DUPFD, 10), hi_sock = ::fcntl(sv[1], F_DUPFD, 10);
+            const int devnull = ::open("/dev/null", O_RDWR);
+            if (hi_log < 0 || hi_life < 0 || hi_sock < 0 || devnull < 0) ::_exit(127);
+            ::dup2(devnull, 0); ::dup2(devnull, 1); ::dup2(hi_log, 2); ::dup2(hi_life, 3); ::dup2(hi_sock, 4);
+            for (int f = 0; f <= 4; ++f) ::fcntl(f, F_SETFD, 0);   // keep these across exec
+#if defined(__linux__) && defined(SYS_close_range)
+            if (::syscall(SYS_close_range, 5u, ~0u, 0u) != 0)
+#endif
+                for (long f = 5; f < maxfd; ++f) ::close(int(f));
+            ::execv("/bin/sh", argv);
+            ::_exit(127);
         }
         ::setpgid(pid, pid);   // also from the parent, so the group exists before any kill(-pgid)
         ::close(sv[1]);
+        ::close(life[0]);
         ::close(logfd);
         pid_ = pgid_ = pid;
         fd_ = sv[0];
+        lifeline_ = life[1];
         ::fcntl(fd_, F_SETFL, ::fcntl(fd_, F_GETFL) | O_NONBLOCK);
     }
 
@@ -443,7 +511,7 @@ private:
         // write
         std::size_t off = 0;
         while (off < line.size()) {
-            const ssize_t n = ::send(fd_, line.data() + off, line.size() - off, MSG_NOSIGNAL);
+            const ssize_t n = ::send(fd_, line.data() + off, line.size() - off, ATOMFORGE_MSG_NOSIGNAL);
             if (n > 0) { off += std::size_t(n); continue; }
             if (n < 0 && errno == EINTR) continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -504,6 +572,11 @@ private:
         if (pid_ <= 0) return true;
         int st = 0;
         const pid_t r = ::waitpid(pid_, &st, WNOHANG);
+        if (r < 0 && errno == ECHILD) {   // already reaped elsewhere (a host that ignores SIGCHLD): it is gone
+            exit_note_ = " (exit status not available)";
+            pid_ = -1;
+            return true;
+        }
         if (r == pid_) {
             if (WIFEXITED(st)) exit_note_ = " (exit status " + std::to_string(WEXITSTATUS(st)) + ")";
             else if (WIFSIGNALED(st)) exit_note_ = " (killed by signal " + std::to_string(WTERMSIG(st)) + ")";
@@ -519,6 +592,7 @@ private:
     }
     void kill_worker() const {
         if (fd_ >= 0) { ::close(fd_); fd_ = -1; }
+        if (lifeline_ >= 0) { ::close(lifeline_); lifeline_ = -1; }
         // The whole process group, even if the worker itself has already exited and left children behind.
         if (pgid_ > 0) { ::kill(-pgid_, SIGKILL); pgid_ = -1; }
         if (pid_ > 0) {
@@ -531,7 +605,7 @@ private:
     void shutdown() noexcept {
         if (pid_ > 0 && fd_ >= 0) {
             static const char bye[] = "{\"op\":\"exit\"}\n";
-            (void)::send(fd_, bye, sizeof bye - 1, MSG_NOSIGNAL);
+            (void)::send(fd_, bye, sizeof bye - 1, ATOMFORGE_MSG_NOSIGNAL);
             ::shutdown(fd_, SHUT_WR);
             for (int k = 0; k < 200 && !worker_exited(); ++k) ::usleep(10000);   // up to 2 s to exit cleanly
         }

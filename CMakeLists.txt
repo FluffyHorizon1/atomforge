@@ -104,6 +104,11 @@ if(ATOMFORGE_BUILD_TESTS)
   atomforge_add_external_group(external_search physics external slow)
   add_test(NAME external_cli COMMAND test_external external_cli $<TARGET_FILE:atomforge_cli>)
   set_tests_properties(external_cli PROPERTIES LABELS "cli external" TIMEOUT 300 SKIP_RETURN_CODE 77)
+  # Python-independent checks in their own entries, so the python3 groups above can report "skipped" without python3.
+  atomforge_add_external_group(external_json   unit external)
+  atomforge_add_external_group(external_locale unit external)
+  add_test(NAME external_cli_args COMMAND test_external external_cli_args $<TARGET_FILE:atomforge_cli>)
+  set_tests_properties(external_cli_args PROPERTIES LABELS "cli external" TIMEOUT 300 SKIP_RETURN_CODE 77)
 endif()
 # --- forge.materials.v0 sidecar tests (self-contained block).
 # Sits after the CLI validate test so it composes with ci/actions-ctest and with
