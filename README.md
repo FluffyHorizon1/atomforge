@@ -21,7 +21,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binaries are portable);
 `-DATOMFORGE_BUILD_TESTS=OFF` skips the `tests/` suite (the CLI `validate` CTest entry is always registered). Tests run with `ctest --test-dir build --output-on-failure`
-(72 s for all 32 entries run one at a time on the 4-core cloud box used for this README, 27 s for `ctest -LE slow`; see [Testing](#testing)).
+(72 s for 32 entries run one at a time on the 4-core cloud box used for this README, 27 s for `ctest -LE slow`; measured before the two sub-second `eam_*` entries below were added, 34 in all; see [Testing](#testing)).
 
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
@@ -70,6 +70,9 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 * **Ni–Al: fails.** The generic mixing rule gives formation energies near zero or positive (B2 NiAl: +0.07 eV/atom),
   where experiment gives about −0.6 eV/atom.
   Strongly bonding intermetallics need quantum-level (DFT) energies. That is the next rung.
+  The failure is pinned, not hidden: `eam_nial` asserts the current known-bad numbers (and fails if they change), and
+  [docs/EAM_LIMITATIONS.md](docs/EAM_LIMITATIONS.md) lists it with the other EAM limitations and the QPU-stack materials the
+  EAM cannot treat at all (no O, N, Si or Nb parameters).
 
 ## Testing
 
@@ -101,6 +104,8 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `phonons_search` [physics, phonons, slow] | every screen verdict with phonons on synthetic candidates; a reduced Cu–Au search reaches `STABLE (... + dynamically stable)` |
 | `phonons_lj` [unit, phonons] | Lennard-Jones fcc phonons vs the analytic dispersion (commensurate and interpolated q); force constants through the bridge equal the native ones |
 | `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
+| `eam_nial` [physics, eam] | the Ni–Al known failure, pinned: B2 NiAl Ef = +0.0676 eV/atom (experiment about −0.6), B2 above L1₁/L1₀, no prototype bound by more than 50 meV, and `results/NiAl/report.json` equal to a fresh computation. Fails, saying what to update, if the failure changes in either direction |
+| `eam_scope` [unit, eam] | the Zhou04 table is the 17 metals; O, N, Si and Nb have no parameters and `ZhouEAM` / `binary_search` refuse them, so AlOx, Ta/Nb oxides, TiN and Si cannot be set up |
 | `structure_misc` [unit] | composition, fraction and supercell bookkeeping; errors for unknown elements, prototypes and parent lattices |
 | `io` [unit] | writers throw `cannot write` on unwritable paths; POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
 | `cli` [unit, cli, slow] | the `atomforge` executable: unknown, missing, non-numeric and out-of-range `search` arguments fail fast; usage and error exit codes, `elements`, `relax` (stable and Born-unstable cases), and a reduced `search` whose `report.json` and structure files are cross-checked. Runs as `test_atomforge cli <path-to-atomforge>`; the executable checks are skipped without the path |
@@ -178,7 +183,7 @@ That run made 785 worker calls in 14.8 s, and the native `--potential lj` search
 `--prototypes`, `--no-ss` and `--no-mc` cut the candidate list. That matters at DFT cost, because a full search makes
 several thousand evaluations (2347 for an Ar–Kr search with all prototypes, one fcc solid solution and one fcc MC run, LJ cut off at 5 Å, 18 candidates).
 
-For QPU materials (Al/AlOx junction barriers, Nb and Ta surface oxides, TiN, the Si substrate) EAM is not enough.
+For QPU materials (Al/AlOx junction barriers, Nb and Ta surface oxides, TiN, the Si substrate) EAM is not enough. (Which of these the EAM can treat at all: [docs/EAM_LIMITATIONS.md](docs/EAM_LIMITATIONS.md).)
 Oxides, nitrides and covalent solids need DFT or reactive potentials.
 
 ## Phonons
