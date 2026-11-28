@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Added
+- CI: `.github/workflows/qpuforge-crosscheck.yml` and `tools/qpuforge_crosscheck.sh` (qpuforge decision D3,
+  2026-11-28). The job builds qpuforge's sidecar reader at a pinned ref (`qpuforge_ref` input, `QPUFORGE_REF` variable,
+  default `main`), runs `search Cu Au --quick --materials` and requires qpuforge to read the sidecar: exit 0, all three
+  quantities skipped as placeholders, nothing applied, and the SHA-256 in a `materials apply --out` copy when that
+  qpuforge has the command. Non-blocking (`continue-on-error`); `ci.yml` is unchanged.
+- README: the contract link points at qpuforge `main` instead of commit `f64238f`; the cross-check is documented.
 - `ExternalPotential` (`include/atomforge/external.hpp`): a `Potential` backed by a persistent worker process, speaking
   line-delimited JSON (protocol 1, [docs/EXTERNAL_PROTOCOL.md](docs/EXTERNAL_PROTOCOL.md)). Energy (eV), forces (eV/Å) and
   the virial or stress in the ZhouEAM sign convention. Crashes, timeouts, malformed replies, wrong shapes and non-finite
