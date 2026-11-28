@@ -63,6 +63,7 @@ def run(system, basis, k, sigma, cut, polarised, threads):
     if polarised:
         args += ["--spin-polarised"]
     model = worker.PySCF(worker.build_parser().parse_args(args))
+    model.kpoint_symmetry = True       # energies only: the SCF runs on the irreducible k-points
     cell, pos, sym = structures()[system]
     t0 = time.time()
     _, info = model.scf(cell, pos, sym)

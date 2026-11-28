@@ -184,6 +184,9 @@ class PySCF:
         self.cutoff = 0.0
         self.dm = None
         self.last_key = None
+        # Set by quantum/nial_pyscf_convergence.py for energies only: the SCF on the symmetry-reduced k-mesh. PySCF has
+        # no forces or stress there, so evaluate() refuses.
+        self.kpoint_symmetry = False
         log("pyscf %s, %d thread(s)" % (pyscf.__version__, lib.num_threads()))
 
     def masses(self, elements):
@@ -206,19 +209,26 @@ class PySCF:
         cell.verbose = 0
         if o.ke_cutoff is not None:
             cell.ke_cutoff = o.ke_cutoff
+        if self.kpoint_symmetry:
+            cell.space_group_symmetry = True
         cell.build()
-        kpts = cell.make_kpts(self.kmesh)
+        if self.kpoint_symmetry:
+            kpts = cell.make_kpts(self.kmesh, space_group_symmetry=True, time_reversal_symmetry=True)
+            nk = int(kpts.nkpts)
+        else:
+            kpts = cell.make_kpts(self.kmesh)
+            nk = len(kpts)
         if o.spin_polarised:
             # PySCF counts the unpaired electrons of KUKS over all k-points. Only the parity has to be consistent here:
             # the smearing sets the occupations, with one Fermi level for both spins.
-            cell.spin = (cell.nelectron * len(kpts)) % 2
-        elif (cell.nelectron * len(kpts)) % 2:
+            cell.spin = (cell.nelectron * nk) % 2
+        elif (cell.nelectron * nk) % 2:
             # Restricted orbitals hold electron pairs. PySCF's smeared KRKS then rounds the count up to the next pair
             # without an error: fcc Al (3 electrons) on 3x3x3 k-points is computed with 82 electrons on 27 k-points,
             # 3.037 per cell, a charged cell with an energy about 0.3 eV too high.
             raise RuntimeError("%d electrons per cell on %d k-points is an odd number: spin-restricted DFT would run a "
                                "charged cell. Use --spin-polarised, or a k-mesh with an even number of points"
-                               % (cell.nelectron, len(kpts)))
+                               % (cell.nelectron, nk))
         ks = dft.KUKS(cell, kpts) if o.spin_polarised else dft.KRKS(cell, kpts)
         ks.set(xc=o.xc, conv_tol=o.conv_tol, max_cycle=o.max_cycle)
         self.numint = ks._numint
@@ -230,7 +240,7 @@ class PySCF:
             from pyscf.pbc.dft import multigrid
             ks._numint = multigrid.MultiGridNumInt(cell)
         mf = smearing_(ks, sigma=o.smearing, method="fermi")
-        key = (tuple(symbols), bool(o.spin_polarised), tuple(int(x) for x in cell.mesh))
+        key = (tuple(symbols), bool(o.spin_polarised), tuple(int(x) for x in cell.mesh), self.kpoint_symmetry)
         dm0 = self.dm if (self.dm is not None and key == self.last_key) else None
         if dm0 is None and o.spin_polarised:
             dm0 = np.array(mf.get_init_guess())            # (2, nk, nao, nao), equal spins
@@ -246,7 +256,8 @@ class PySCF:
         moment = 0.0
         if o.spin_polarised:
             s1e = mf.get_ovlp()
-            moment = float(sum(np.einsum("ij,ji->", dm[0][k] - dm[1][k], s1e[k]).real for k in range(len(kpts))) / len(kpts))
+            w = kpts.weights_ibz if self.kpoint_symmetry else [1.0 / nk] * nk     # the density matrix is on the reduced mesh
+            moment = float(sum(w[k] * np.einsum("ij,ji->", dm[0][k] - dm[1][k], s1e[k]).real for k in range(len(w))))
         # With smearing the SCF minimises the Mermin free energy F = E - sigma*S, and the analytic forces and stress are
         # derivatives of F, not of E. F is the energy the bridge gets, so that energy, forces and stress are consistent.
         f = getattr(mf, "e_free", None)
@@ -254,12 +265,14 @@ class PySCF:
         ez = getattr(mf, "e_zero", None)
         ez = float(e) if ez is None else float(ez)
         info = {"e": float(e), "f": f, "e_zero": ez, "moment": moment, "cycles": ncyc[0], "nao": int(cell.nao),
-                "mesh": [int(x) for x in cell.mesh], "nk": len(kpts), "t_scf": time.time() - t0}
+                "mesh": [int(x) for x in cell.mesh], "nk": nk, "nk_ibz": int(kpts.nkpts_ibz) if self.kpoint_symmetry else nk, "t_scf": time.time() - t0}
         return mf, info
 
     def evaluate(self, cell_a, pos, species, symbols):
         import numpy as np
         from pyscf.pbc.grad import krks_stress, kuks_stress
+        if self.kpoint_symmetry:
+            raise RuntimeError("no forces or stress on a symmetry-reduced k-mesh")
         mf, info = self.scf(cell_a, pos, symbols)
         t0 = time.time()
         mf._numint = self.numint
