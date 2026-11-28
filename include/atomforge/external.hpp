@@ -19,7 +19,8 @@
 // ExternalPotentialError. The message includes the tail of the worker's stderr log. A worker that failed is killed and is not
 // restarted: later calls throw too. A reply {"id":N,"error":"..."} also throws, but leaves the worker running (an SCF that
 // did not converge should not end a search). POSIX systems with /bin/sh (Linux, macOS; tested on Linux): fork/exec,
-// socketpair, pipe, poll. The worker runs under an exec'd /bin/sh supervisor (see supervisor_script()). Not thread-safe.
+// socketpair, pipe, poll. The worker runs under an exec'd /bin/sh supervisor (see supervisor_script()).
+// One request at a time: a concurrent evaluate() from a second thread throws.
 #pragma once
 #include "potential.hpp"
 #include <atomic>
@@ -279,6 +280,10 @@ public:
     pid_t supervisor_pid() const { return pid_; }   // leader of the worker's process group (for tests and diagnostics)
 
     EvalResult evaluate(const Structure& s, NeighborList&) const override {
+        // One worker serves one request at a time. atomforge's relax / search / phonons call evaluate() sequentially; a
+        // second, concurrent call (another thread) is refused rather than interleaved on the pipe.
+        if (busy_.exchange(true)) throw ExternalPotentialError("ExternalPotential::evaluate called concurrently; use one ExternalPotential (worker) per thread");
+        struct Release { std::atomic<bool>& b; ~Release() { b = false; } } release{busy_};
         if (pid_ <= 0) throw ExternalPotentialError("external worker is not running (it failed earlier; see " + opt_.log_path + ")");
         const std::size_t N = s.size();
         if (s.species.size() != N) throw ExternalPotentialError("structure has " + std::to_string(s.species.size()) + " species for " + std::to_string(N) + " atoms");
@@ -339,6 +344,7 @@ private:
     mutable int lifeline_ = -1;  // write end of the supervisor's lifeline pipe (closing it ends the worker's group)
     mutable std::string rbuf_;
     mutable long next_id_ = 1;
+    mutable std::atomic<bool> busy_{false};
     long log_offset_ = 0;          // where this instance's section of the log starts
 
     static std::string default_log_path() {

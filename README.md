@@ -21,7 +21,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binaries are portable);
 `-DATOMFORGE_BUILD_TESTS=OFF` skips the `tests/` suite (the CLI `validate` CTest entry is always registered). Tests run with `ctest --test-dir build --output-on-failure`
-(see [Testing](#testing)).
+(72 s for all 32 entries run one at a time on the 4-core cloud box used for this README, 27 s for `ctest -LE slow`; see [Testing](#testing)).
 
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
@@ -73,7 +73,7 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 
 ## Testing
 
-`ctest` runs `tests/test_atomforge.cpp` and `tests/test_external.cpp` (custom `CHECK` macros, one CTest entry per group, labels shown in brackets):
+`ctest` runs `tests/test_atomforge.cpp`, `tests/test_external.cpp`, `tests/test_phonons.cpp` and `tests/test_materials_contract.cpp` (custom `CHECK` macros, one CTest entry per group, labels shown in brackets):
 
 | group | what it checks |
 |-------|----------------|
@@ -90,10 +90,16 @@ exits non-zero if any predicted ground state is wrong or any lattice constant is
 | `external` [unit, external] | `ExternalPotential` with the `lj` worker vs the native LJ: energy, forces, virial to 1e-9 (rattled, triclinic, unwrapped, two species) |
 | `external_relax` [physics, external] | FIRE with full cell through the bridge: same steps, energy and volume as the native run; residual force and stress |
 | `external_errors` [unit, external] | missing worker, early exit, handshake timeout, wrong protocol, crash, hang, NaN, wrong shape, bad JSON, wrong id, worker-side error, stderr log |
-| `external_cli` [cli, external] | `atomforge relax --potential external:...` end to end against `--potential lj`, and its error exits |
+| `external_cli` [cli, external] | `atomforge relax --potential external:...` end to end against `--potential lj`, a reduced `search` through the worker (report names the backend, has `screen.phonons`), and the error exits |
 | `external_json` [unit, external] | the protocol's JSON reader and number formatting (no python3 needed) |
 | `external_locale` [unit, external] | JSON numbers and a whole handshake under a de_DE decimal-comma locale, generated with `localedef` into a temporary `LOCPATH`; skipped if that is not possible |
 | `external_cli_args` [cli, external] | `relax` argument and failure exit codes: 1 for usage and argument errors (including a bad `--potential`), 2 for failures while running (no python3 needed) |
+| `external_search` [physics, external, slow] | `binary_search` through the `lj` worker reproduces the native LJ search exactly; `report.json` names the backend and carries `screen.phonons`; full reduced pipeline (MC included) on the native LJ |
+| `phonons` [physics, phonons] | fcc Cu (EAM) stable, acoustic modes 0 at Γ, X-point frequencies vs experiment, supercell convergence; bcc Cu imaginary at N |
+| `phonons_basis` [unit, phonons] | 4-atom cubic fcc vs 1-atom primitive at q + G; L1₂ Cu₃Au (unequal masses) vs its doubled cell with a reordered basis |
+| `phonons_asr` [unit, phonons] | the sum-rule violation before correction: 1e-13 for the EAM, the finite-difference value for a synthetic egg box |
+| `phonons_search` [physics, phonons, slow] | every screen verdict with phonons on synthetic candidates; a reduced Cu–Au search reaches `STABLE (... + dynamically stable)` |
+| `phonons_lj` [unit, phonons] | Lennard-Jones fcc phonons vs the analytic dispersion (commensurate and interpolated q); force constants through the bridge equal the native ones |
 | `md_invariance` [physics, symmetry] | `run_md` averages and final positions unchanged when the start structure's atoms are shifted by lattice vectors (including shifts that make `run_md` wrap) |
 | `structure_misc` [unit] | composition, fraction and supercell bookkeeping; errors for unknown elements, prototypes and parent lattices |
 | `io` [unit] | writers throw `cannot write` on unwritable paths; POSCAR, extended XYZ and `report.json` writers checked against the in-memory structure, `report.json` parsed as strict JSON (escaping, empty and real search results) |
@@ -154,12 +160,67 @@ displacement. With Fermi smearing the worker returns the free energy E - σS, be
 stress are derivatives of; returning E instead put the virial off by a factor of 1.9. One evaluation took 26 s for the
 1-atom cell and 131 s for the 4-atom cell on 2 threads. The CI tests do not install PySCF or MACE.
 
+### The whole search through any potential
+
+`atomforge search` takes the same `--potential` option, and every stage then uses that potential: the elemental
+references, prototypes, solid solutions, Monte Carlo ordering, relaxation, hull, Born and MD screen, and the optional phonons.
+All evaluations are made one at a time on a single `Potential`, with no threading over candidates. One worker process
+therefore serves the whole search, and `ExternalPotential` refuses a concurrent call from a second thread rather than
+interleaving requests. `report.json` names the backend in `"potential"` (for example `"external:lj(eps=0.0104,sigma=3.4,rc=8.5)"`).
+
+```bash
+./build/atomforge search Ar Kr --potential external:"python3 quantum/worker.py lj" --volume 38,38 \
+    --prototypes L1_2,B2 --no-ss --no-mc --md-steps 50 --phonons --phonon-supercell 1
+```
+
+That run made 785 worker calls in 14.8 s, and the native `--potential lj` search gives identical energies and volumes
+(test `external_search`). `--volume VA,VB` sets the starting volumes per atom for elements outside the Zhou04 table.
+`--prototypes`, `--no-ss` and `--no-mc` cut the candidate list. That matters at DFT cost, because a full search makes
+several thousand evaluations (2347 for an Ar–Kr search with all prototypes, one fcc solid solution and one fcc MC run, LJ cut off at 5 Å, 18 candidates).
+
 For QPU materials (Al/AlOx junction barriers, Nb and Ta surface oxides, TiN, the Si substrate) EAM is not enough.
 Oxides, nitrides and covalent solids need DFT or reactive potentials.
 
+## Phonons
+
+`include/atomforge/phonons.hpp` computes harmonic phonons by finite displacements. Each atom of the cell is displaced
+by ±0.01 Å in a supercell whose faces are at least twice the cutoff apart, which gives the force constants by central
+differences. The acoustic sum rule is imposed on the self term, and the dynamical matrix is built with minimum-image
+weights. Frequencies at the q-points commensurate with the supercell are exact for those force constants, so the
+stability check samples that grid, not a band path. A structure is dynamically stable when no mode is below −0.1 THz on
+that grid. The check counts only when the supercell has at least two cells along every lattice vector and faces at least
+one cutoff apart. Otherwise it is reported as `not assessed`: a Γ-only (1×1×1) check always passes, because the sum rule
+zeroes the acoustic modes there, so bcc Cu at 1×1×1 is `not assessed`, not stable. Imaginary modes on any grid still mean
+`dynamically UNSTABLE`. The size of the sum-rule correction, max |Σⱼ Φ|, is reported as `asr_violation`. It is 1e-13
+eV/Å² for the EAM, and it shows egg-box errors of a DFT grid: a synthetic 0.05 eV/Å² egg box is reported as 0.0498, the
+finite-difference value. `atomforge relax ... --phonons` prints the check. `search --phonons` adds it to the stability
+screen (`STABLE (on hull, mechanically + thermally + dynamically stable)`, `UNSTABLE (imaginary phonons)`, or `phonons
+not assessed` in the verdict) and to `report.json` as `screen.phonons`.
+
+| | this code (Zhou04 EAM) | experiment, Cu at 80 K (Svensson, Brockhouse and Rowe, Phys. Rev. 155, 619 (1967)) |
+|---|---|---|
+| fcc Cu, X transverse | 5.11 THz | 5.10 THz |
+| fcc Cu, X longitudinal | 8.34 THz | 7.25 THz |
+| fcc Cu, highest mode (L point) | 8.39 THz | |
+| fcc Cu, acoustic modes at Γ | 1e-7 THz | 0 |
+| bcc Cu | imaginary, −1.12 THz at N | (bcc Cu is not stable) |
+
+The longitudinal modes come out 15% stiff with this potential (16% for the highest mode); the transverse X mode is within
+0.2%. That is the Zhou04 potential's stiffness, not a supercell effect: at a q that is commensurate with neither supercell,
+(0.31, 0.12, 0.05) 2π/a, the 6×6×6 and 8×8×8 supercells agree to 4.5e-4 THz. (At X and L they agree exactly by
+construction.) The `phonons` test therefore allows 20% for the longitudinal X mode and the highest frequency, and 5% for
+the transverse X mode. Multi-atom cells are checked by folding: the 4-atom cubic fcc cell reproduces the primitive cell's
+frequencies at q + G to 1e-7 THz, and L1₂ Cu₃Au (masses 63.5 and 197.0) matches its doubled 8-atom cell to 3e-10 THz.
+For the native Lennard-Jones fcc lattice, the finite-displacement
+frequencies agree with the analytic lattice-sum dispersion to 2e-4 THz, and the force constants through the `lj` worker
+are identical to the native ones. The cost is 6 evaluations per atom of the cell, on the supercell, which is small for EAM
+but dominant for DFT.
+
 ## Limitations
 
-The Monte Carlo search runs on 48-site cells. Dynamical stability is checked by MD heat-and-quench, not phonons.
+The Monte Carlo search runs on 48-site cells. Dynamical stability is checked by MD heat-and-quench, and by phonons when
+`--phonons` is given; the phonon check samples only the q-points commensurate with its supercell, so a small supercell
+(`--phonon-supercell 1` is Γ only, and is reported as `not assessed`) can miss an instability.
 There is no magnetism and no charge transfer (EAM). Alloy energies are qualitative.
 
 The neighbour list accepts atoms anywhere in space: the periodic-image range grows with how far atoms lie outside the home

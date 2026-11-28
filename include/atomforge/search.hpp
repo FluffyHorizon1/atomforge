@@ -6,10 +6,16 @@
 //   4. simulated-annealing Monte Carlo of chemical ordering on fcc/bcc/hcp supercells
 //      (finds orderings that are not in the prototype list)
 //   5. formation energies -> convex hull -> energy above hull
-//   6. stability screen of on/near-hull candidates: Born elastic + MD heat/quench
+//   6. stability screen of on/near-hull candidates: Born elastic + MD heat/quench (+ finite-displacement phonons, optional)
+//
+// Any Potential can drive the search (binary_search(A, B, pot, opt)); the overload without one uses the Zhou04 EAM.
+// Every energy, force and virial evaluation is made sequentially, one at a time, on the one Potential object: there is no
+// threading over candidates, so an ExternalPotential (one worker process) is safe here.
 #pragma once
 #include "analysis.hpp"
 #include "lattice.hpp"
+#include "phonons.hpp"
+#include <algorithm>
 #include <functional>
 #include <numeric>
 #include <iostream>
@@ -34,6 +40,7 @@ struct Candidate {
     bool screened{false};
     ElasticResult elastic;
     ThermalCheck thermal;
+    PhononCheck phonons;        // computed only with SearchOptions::phonons
     std::string verdict;
 };
 
@@ -47,6 +54,14 @@ struct SearchOptions {
     int md_steps = 3000;
     bool verbose = true;
     unsigned seed = 2026;
+    std::vector<std::string> prototypes;   // ordered prototypes to try, by name prefix ("L1_2", "B2", ...); empty = all
+    std::vector<std::string> ss_parents{"fcc", "bcc", "hcp"};
+    std::vector<double> ss_fractions{0.25, 0.5, 0.75};
+    // Starting volumes per atom of pure A and pure B (A^3), mixed by Vegard's law. Empty: from the Zhou04 table
+    // (0.74 r_e^3), which only knows its 17 elements; set this for other elements or potentials.
+    std::vector<double> volume_per_atom;
+    bool phonons = false;          // add a finite-displacement phonon check to the stability screen
+    PhononOptions phonon_opt;
 };
 
 struct SearchResult {
@@ -115,8 +130,35 @@ inline Structure mc_ordering(Structure s, const Potential& pot, int ia, int ib, 
     return best;
 }
 
-inline SearchResult binary_search(const std::string& A, const std::string& B, const SearchOptions& opt = {}) {
-    ZhouEAM pot({A, B});
+// Verdict of the stability screen for a screened candidate. With phonons: imaginary modes make it "UNSTABLE (imaginary
+// phonons)"; a check that was not assessed (too small a supercell) neither passes nor fails, and the verdict says so.
+inline std::string screen_verdict(const Candidate& c, bool phonons) {
+    const bool on_hull = c.e_hull < 1e-4;
+    const bool bound = c.ef < -1e-3;
+    const bool dyn_bad = phonons && c.phonons.n_imag > 0;
+    if (on_hull && bound && c.elastic.mechanically_stable && c.thermal.retained && !dyn_bad)
+        return phonons && c.phonons.stable ? "STABLE (on hull, mechanically + thermally + dynamically stable)"
+                                           : "STABLE (on hull, mechanically + thermally stable" + std::string(phonons ? "; phonons not assessed" : "") + ")";
+    if (bound && c.elastic.mechanically_stable && c.thermal.retained && !dyn_bad)
+        return "METASTABLE (near hull" + std::string(!phonons ? "" : (c.phonons.stable ? "; dynamically stable" : "; phonons not assessed")) + ")";
+    if (!c.elastic.mechanically_stable) return "UNSTABLE (fails Born criteria)";
+    if (!c.thermal.retained) return "UNSTABLE (transforms under MD)";
+    if (dyn_bad) return "UNSTABLE (imaginary phonons)";
+    return "NOT BOUND (Ef >= 0, phase-separates)";
+}
+
+inline SearchResult binary_search(const std::string& A, const std::string& B, const Potential& pot, const SearchOptions& opt = {}) {
+    const auto& els = pot.elements();
+    if (els.size() != 2 || els[0] != A || els[1] != B)
+        throw std::runtime_error("binary_search: the potential's elements must be {" + A + ", " + B + "}");
+    if (!opt.volume_per_atom.empty() && (opt.volume_per_atom.size() != 2 || !(opt.volume_per_atom[0] > 0) || !(opt.volume_per_atom[1] > 0)))
+        throw std::runtime_error("binary_search: volume_per_atom needs two positive volumes (A, B)");
+    if (opt.volume_per_atom.empty() && (!ZhouEAM::lookup(A) || !ZhouEAM::lookup(B)))
+        throw std::runtime_error("binary_search: no Zhou04 reference volume for " + std::string(ZhouEAM::lookup(A) ? B : A) + "; set volume_per_atom");
+    auto vegard = [&](double xb) {
+        if (opt.volume_per_atom.empty()) return detail::vegard_volume(A, B, xb);
+        return (1 - xb) * opt.volume_per_atom[0] + xb * opt.volume_per_atom[1];
+    };
     const int ia = 0, ib = 1;
     SearchResult R; R.A = A; R.B = B; R.potential = pot.name();
     std::mt19937 rng(opt.seed);
@@ -145,7 +187,7 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
         for (const auto& p : prototypes()) {
             if (p.nB) continue;
             Structure s = p.build(which, which);
-            detail::scale_to_volume(s, detail::vegard_volume(A, B, which == ib ? 1.0 : 0.0));
+            detail::scale_to_volume(s, vegard(which == ib ? 1.0 : 0.0));
             auto k = add("element", p.name, p.parent, s);
             if (R.candidates[k].e_per_atom < best) { best = R.candidates[k].e_per_atom; bestname = p.name; }
         }
@@ -157,24 +199,26 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
     log("[2/6] ordered prototypes\n");
     for (const auto& p : prototypes()) {
         if (p.nB == 0) continue;
+        if (!opt.prototypes.empty() && std::none_of(opt.prototypes.begin(), opt.prototypes.end(),
+                                                    [&](const std::string& w) { return p.name.rfind(w, 0) == 0; })) continue;
         for (int swapped = 0; swapped < 2; ++swapped) {
             const int a = swapped ? ib : ia, b = swapped ? ia : ib;
             if (p.nA == p.nB && swapped) continue;   // AB-symmetric prototype
             Structure s = p.build(a, b);
-            detail::scale_to_volume(s, detail::vegard_volume(A, B, s.fraction(ib)));
+            detail::scale_to_volume(s, vegard(s.fraction(ib)));
             add("prototype", p.name.substr(0, p.name.find(' ')), p.parent, s);
         }
     }
 
     // 3. random solid solutions
     log("[3/6] random solid solutions\n");
-    for (const std::string parent : {"fcc", "bcc", "hcp"})
-        for (double x : {0.25, 0.5, 0.75}) {
+    for (const std::string& parent : opt.ss_parents)
+        for (double x : opt.ss_fractions) {
             double sumE = 0; std::size_t best_k = 0; double bestE = 1e9;
             for (int sd = 0; sd < opt.ss_seeds; ++sd) {
                 Structure s = detail::mc_supercell(parent, ia);
                 randomize_occupancy(s, ia, ib, x, rng);
-                detail::scale_to_volume(s, detail::vegard_volume(A, B, x));
+                detail::scale_to_volume(s, vegard(x));
                 auto k = add("solid-solution", "SS-" + parent, parent, s);
                 sumE += R.candidates[k].e_per_atom;
                 if (R.candidates[k].e_per_atom < bestE) { bestE = R.candidates[k].e_per_atom; best_k = k; }
@@ -195,7 +239,7 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
             Structure s = detail::mc_supercell(parent, ia);
             const double nb = x * s.size();
             if (std::abs(nb - std::round(nb)) > 1e-6) continue;
-            detail::scale_to_volume(s, detail::vegard_volume(A, B, x));
+            detail::scale_to_volume(s, vegard(x));
             Structure best = mc_ordering(s, pot, ia, ib, x, opt.mc_sweeps, rng);
             add("mc-ordering", "MC-" + parent, parent, best);
             log(".");
@@ -213,7 +257,7 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
     for (auto& c : R.candidates) c.e_hull = c.ef - hull_energy_at(R.hull, c.x);
 
     // 6. stability screen: lowest structure per composition within window, skipping elements
-    log("[6/6] stability screen (elastic + MD at " + std::to_string(int(opt.md_T)) + " K)\n");
+    log("[6/6] stability screen (elastic + MD at " + std::to_string(int(opt.md_T)) + " K" + (opt.phonons ? " + phonons" : "") + ")\n");
     std::map<long, int> best_at_x;
     for (std::size_t k = 0; k < R.candidates.size(); ++k) {
         const auto& c = R.candidates[k];
@@ -227,15 +271,16 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
         c.screened = true;
         c.elastic = elastic_tensor(c.relaxed, pot);
         c.thermal = thermal_check(c.relaxed, pot, opt.md_T, opt.md_steps);
-        const bool on_hull = c.e_hull < 1e-4;
-        const bool bound = c.ef < -1e-3;
-        if (on_hull && bound && c.elastic.mechanically_stable && c.thermal.retained) c.verdict = "STABLE (on hull, mechanically + thermally stable)";
-        else if (bound && c.elastic.mechanically_stable && c.thermal.retained) c.verdict = "METASTABLE (near hull)";
-        else if (!c.elastic.mechanically_stable) c.verdict = "UNSTABLE (fails Born criteria)";
-        else if (!c.thermal.retained) c.verdict = "UNSTABLE (transforms under MD)";
-        else c.verdict = "NOT BOUND (Ef >= 0, phase-separates)";
+        if (opt.phonons) c.phonons = phonon_check(c.relaxed, pot, opt.phonon_opt);
+        c.verdict = screen_verdict(c, opt.phonons);
     }
     return R;
+}
+
+// The original entry point: the Zhou04 EAM for A and B.
+inline SearchResult binary_search(const std::string& A, const std::string& B, const SearchOptions& opt = {}) {
+    ZhouEAM pot({A, B});
+    return atomforge::binary_search(A, B, static_cast<const Potential&>(pot), opt);
 }
 
 } // namespace atomforge

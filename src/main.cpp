@@ -7,6 +7,7 @@
 #include "atomforge/atomforge.hpp"
 #include "atomforge/external.hpp"
 #include "atomforge/lj.hpp"
+#include "atomforge/phonons.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -22,10 +23,12 @@ static void usage() {
               "  atomforge elements\n"
               "  atomforge validate\n"
               "  atomforge relax <prototype> <A> [B] [--potential eam|lj[:eps,sigma,rc]|external:CMD] [--volume V]\n"
-              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--worker-timeout S]\n"
-              "                 [--worker-hello-timeout S] [--worker-log PATH]\n"
+              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--phonons] [--phonon-supercell N]\n"
+              "                 [--worker-timeout S] [--worker-hello-timeout S] [--worker-log PATH]\n"
               "                                          prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
-              "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick] [--materials]");
+              "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick] [--materials]\n"
+              "                 [--potential eam|lj[:eps,sigma,rc]|external:CMD] [--volume VA,VB] [--prototypes P1,P2,..]\n"
+              "                 [--no-ss] [--no-mc] [--phonons] [--phonon-supercell N] [--worker-timeout S] [--worker-log PATH]");
 }
 
 static int cmd_elements() {
@@ -72,6 +75,8 @@ static int cmd_relax(int argc, char** argv) {
     std::string spec = "eam";
     ExternalOptions xo;
     double volume = 0, fmax = 1e-3;
+    bool phonons = false;
+    PhononOptions po;
     int elastic = -1;   // -1: default (on for eam/lj, off for external, where it costs at least 24 more evaluations)
     CellMode cell = CellMode::Full;
     // Exit status, as for `search`: 1 for usage and argument errors (unknown option, bad value, unknown prototype, extra
@@ -98,6 +103,13 @@ static int cmd_relax(int argc, char** argv) {
         else if (a == "--worker-log") xo.log_path = val();
         else if (a == "--elastic") elastic = 1;
         else if (a == "--no-elastic") elastic = 0;
+        else if (a == "--phonons") phonons = true;
+        else if (a == "--phonon-supercell") {
+            const double n = num(0);
+            if (n != std::floor(n) || n > 16) throw std::runtime_error("--phonon-supercell expects an integer 1..16");
+            po.n[0] = po.n[1] = po.n[2] = int(n);
+            phonons = true;
+        }
         else if (a == "--cell") {
             const std::string c = val();
             if (c == "full") cell = CellMode::Full;
@@ -143,6 +155,15 @@ static int cmd_relax(int argc, char** argv) {
         std::printf("  C11=%.1f C12=%.1f C44=%.1f GPa | B=%.1f G=%.1f GPa | min eig %.1f -> %s\n", el.C[0][0], el.C[0][1], el.C[3][3],
                     el.bulk_voigt, el.shear_voigt, el.eigen[0], el.mechanically_stable ? "Born-stable" : "Born-UNSTABLE");
     }
+    if (phonons) {
+        const auto t1 = std::chrono::steady_clock::now();
+        const auto FC = force_constants(r.s, *pot, po);
+        const auto P = phonon_check(FC, po.imag_tol_THz);
+        std::printf("  phonons (%dx%dx%d supercell, %ld evaluations, %.1f s): %d commensurate q, min %.3f max %.3f THz, "
+                    "%d modes below -%.2f THz, sum-rule violation %.1e eV/A^2 -> %s\n", P.n[0], P.n[1], P.n[2], P.evaluations,
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count(), P.nq, P.min_THz, P.max_THz,
+                    P.n_imag, P.imag_tol_THz, P.asr_violation, phonon_status(P).c_str());
+    }
     return 0;
 }
 
@@ -152,6 +173,8 @@ static int cmd_search(int argc, char** argv) {
     SearchOptions opt;
     std::string out = "results/" + A + B;
     bool materials = false;
+    std::string spec = "eam";
+    ExternalOptions xo;
     int i = 4;
     auto need = [&](const char* optname) -> const char* {
         if (i + 1 >= argc) {
@@ -194,6 +217,43 @@ static int cmd_search(int argc, char** argv) {
             if (!parse_int("--mc-sweeps", 1, &opt.mc_sweeps)) return 1;
         } else if (!std::strcmp(argv[i], "--materials")) {
             materials = true;
+        } else if (!std::strcmp(argv[i], "--potential")) {
+            const char* v = need("--potential"); if (!v) return 1;
+            spec = v;
+        } else if (!std::strcmp(argv[i], "--volume")) {   // VA,VB in A^3/atom (needed outside the Zhou04 table)
+            const char* v = need("--volume"); if (!v) return 1;
+            double va = 0, vb = 0; char tail = 0;
+            if (std::sscanf(v, "%lf,%lf%c", &va, &vb, &tail) != 2 || !(va > 0) || !(vb > 0)) {
+                std::fprintf(stderr, "error: --volume expects VA,VB (two positive volumes per atom), got '%s'\n", v);
+                return 1;
+            }
+            opt.volume_per_atom = {va, vb};
+        } else if (!std::strcmp(argv[i], "--prototypes")) {   // comma-separated name prefixes, e.g. L1_2,B2
+            const char* v = need("--prototypes"); if (!v) return 1;
+            opt.prototypes.clear();
+            std::string cur;
+            for (const char* c = v;; ++c) {
+                if (*c == ',' || *c == '\0') { if (!cur.empty()) opt.prototypes.push_back(cur); cur.clear(); if (!*c) break; }
+                else cur += *c;
+            }
+            if (opt.prototypes.empty()) { std::fprintf(stderr, "error: --prototypes needs at least one name\n"); return 1; }
+        } else if (!std::strcmp(argv[i], "--no-mc")) {
+            opt.mc_parents.clear();
+        } else if (!std::strcmp(argv[i], "--no-ss")) {
+            opt.ss_parents.clear();
+        } else if (!std::strcmp(argv[i], "--phonons")) {
+            opt.phonons = true;
+        } else if (!std::strcmp(argv[i], "--phonon-supercell")) {
+            int n = 0;
+            if (!parse_int("--phonon-supercell", 1, &n)) return 1;
+            if (n > 16) { std::fprintf(stderr, "error: --phonon-supercell expects an integer 1..16, got %d\n", n); return 1; }
+            opt.phonons = true;
+            opt.phonon_opt.n[0] = opt.phonon_opt.n[1] = opt.phonon_opt.n[2] = n;
+        } else if (!std::strcmp(argv[i], "--worker-timeout")) {
+            if (!parse_double("--worker-timeout", 0.0, &xo.eval_timeout_s)) return 1;
+        } else if (!std::strcmp(argv[i], "--worker-log")) {
+            const char* v = need("--worker-log"); if (!v) return 1;
+            xo.log_path = v;
         } else if (!std::strcmp(argv[i], "--quick")) {
             opt.mc_sweeps = 100; opt.md_steps = 1000; opt.ss_seeds = 2;
         } else if (argv[i][0] == '-') {
@@ -207,7 +267,8 @@ static int cmd_search(int argc, char** argv) {
         }
     }
     const auto t0 = std::chrono::steady_clock::now();
-    auto R = binary_search(A, B, opt);
+    const auto pot = make_potential(spec, {A, B}, xo);
+    auto R = binary_search(A, B, *pot, opt);
     const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 
     fs::create_directories(out + "/structures");
@@ -235,7 +296,13 @@ static int cmd_search(int argc, char** argv) {
         std::printf("  %-34s Ef=%7.1f meV  B=%6.1f GPa  minCeig=%6.1f GPa  MD %4.0fK: dEq=%6.1f meV shift=%.2f A  => %s\n", c.label.c_str(),
                     1000 * c.ef, c.elastic.bulk_voigt, c.elastic.eigen[0], c.thermal.T, 1000 * c.thermal.dE_quench_per_atom,
                     c.thermal.max_site_shift, c.verdict.c_str());
+        if (c.phonons.computed)
+            std::printf("  %-34s phonons %dx%dx%d: %d q, min %.3f max %.3f THz, %d imaginary -> %s\n", "", c.phonons.n[0], c.phonons.n[1],
+                        c.phonons.n[2], c.phonons.nq, c.phonons.min_THz, c.phonons.max_THz, c.phonons.n_imag,
+                        phonon_status(c.phonons).c_str());
     }
+    if (const auto* ext = dynamic_cast<const ExternalPotential*>(pot.get()))
+        std::printf("\n%ld worker evaluations (worker log: %s)\n", ext->evaluations(), ext->log_path().c_str());
     std::printf("\nwrote %s/report.json and %zu structures (POSCAR + extxyz) in %.1f s\n", out.c_str(), R.candidates.size(), secs);
     if (materials) std::printf("wrote %s/materials-contract-%s%s.json (forge.materials.v0; Q_dielectric, loss_tangent, junction_gap_ueV are placeholders)\n", out.c_str(), A.c_str(), B.c_str());
     return 0;

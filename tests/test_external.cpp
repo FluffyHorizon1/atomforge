@@ -2,6 +2,7 @@
 // quantum/worker.py lj), FIRE relaxation through the bridge, and the bridge's failure paths.
 //
 //   test_external <group>    groups: lj external external_relax external_errors
+//   test_external external_search  the binary search pipeline through the bridge vs the native LJ (reduced)
 //   test_external external_cli <path-to-atomforge>   `atomforge relax --potential external:...` end to end
 //
 // Groups that need python3 exit with status 77 (CTest SKIP_RETURN_CODE) when it is not on PATH.
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <thread>
 #include <fcntl.h>
 #include <poll.h>
 #include <clocale>
@@ -21,6 +23,9 @@
 #include <filesystem>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 #ifndef ATOMFORGE_SOURCE_DIR
 #define ATOMFORGE_SOURCE_DIR "."
@@ -418,6 +423,17 @@ static void test_external_errors() {
         ExternalPotential p1(lj_command(), {"Ar"}, d1), p2(lj_command(), {"Ar"}, d2);
         CHECK(p1.log_path() != p2.log_path(), "two potentials share the default log %s", p1.log_path().c_str());
     }
+    // One worker serves one request at a time: a second thread's evaluate() while the first waits is refused.
+    {
+        ExternalPotential p(lj_command("--delay 1.0"), {"Ar"}, with("concurrent"));
+        std::string first_err;
+        std::thread t([&] { try { evaluate(s, p); } catch (const std::exception& e) { first_err = e.what(); } });
+        ::usleep(300000);
+        expect_error("concurrent evaluate()", [&] { evaluate(s, p); }, "called concurrently", 2);
+        t.join();
+        CHECK(first_err.empty() && p.alive(), "the first (legitimate) request failed: %s", first_err.c_str());
+        CHECK(evaluate(s, p).forces.size() == s.size(), "worker usable after a refused concurrent call");
+    }
     // N1: the supervisor is an exec'd shell: host descriptors without FD_CLOEXEC do not leak into it or the worker, and
     // host signal handlers do not run in it.
     {
@@ -485,6 +501,64 @@ static void test_external_errors() {
         CHECK(evaluate(s, p).forces.size() == s.size(), "cd ... && worker");
     }
 
+}
+
+// ---------------------------------------------------------------- the search pipeline through the bridge
+static void test_external_search() {
+    std::puts("[external_search] binary_search through ExternalPotential(lj) reproduces the native LJ search; report names the backend");
+    if (!have_python()) return;
+    // Reduced: two prototypes, no 48-site solid-solution / MC cells (about 50 ms per call in pure Python), short MD,
+    // Gamma-only phonons. The native run below covers the full reduced pipeline including MC.
+    SearchOptions o;
+    o.prototypes = {"L1_2", "B2"};
+    o.ss_parents = {}; o.mc_parents = {};
+    o.md_steps = 50; o.volume_per_atom = {38, 38}; o.verbose = false;
+    o.phonons = true; o.phonon_opt.n[0] = o.phonon_opt.n[1] = o.phonon_opt.n[2] = 1;
+    LennardJones nat({"Ar", "Kr"}, kLJ);
+    const auto Rn = binary_search("Ar", "Kr", nat, o);
+    ExternalOptions xo; xo.log_path = log_path("external_search"); xo.eval_timeout_s = 120;
+    ExternalPotential ext(lj_command(), {"Ar", "Kr"}, xo);
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto Re = binary_search("Ar", "Kr", ext, o);
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(Rn.candidates.size() == Re.candidates.size() && !Re.candidates.empty(), "candidate counts %zu vs %zu", Rn.candidates.size(), Re.candidates.size());
+    double dE = 0, dV = 0; int nscreen = 0, same_verdict = 0, nph = 0;
+    for (std::size_t k = 0; k < std::min(Rn.candidates.size(), Re.candidates.size()); ++k) {
+        const auto &a = Rn.candidates[k], &b = Re.candidates[k];
+        dE = std::max(dE, std::abs(a.e_per_atom - b.e_per_atom));
+        dV = std::max(dV, std::abs(a.vol_per_atom - b.vol_per_atom));
+        if (b.screened) { ++nscreen; same_verdict += (a.verdict == b.verdict); nph += b.phonons.computed; }
+    }
+    std::printf("  %zu candidates, %d screened, %ld worker calls, %.1f s: max |dE| %.1e eV/atom, max |dV| %.1e A^3/atom, potential '%s'\n",
+                Re.candidates.size(), nscreen, ext.evaluations(), secs, dE, dV, Re.potential.c_str());
+    CHECK(dE < 1e-9 && dV < 1e-9, "bridge and native searches differ (dE %.3e, dV %.3e)", dE, dV);
+    CHECK(nscreen > 0 && same_verdict == nscreen && nph == nscreen, "screen: %d screened, %d same verdicts, %d with phonons", nscreen, same_verdict, nph);
+    CHECK(Re.potential.rfind("external:lj(", 0) == 0, "SearchResult::potential '%s'", Re.potential.c_str());
+    const std::string path = log_path("external_search_report") + ".json";
+    write_report_json(path, Re);
+    std::ifstream f(path); std::stringstream ss; ss << f.rdbuf();
+    const std::string js = ss.str();
+    CHECK(js.find("\"potential\": \"external:lj(") != std::string::npos, "report.json does not name the external backend");
+    // Gamma-only phonons (1x1x1, to keep the Python worker cheap) are reported as not assessed, never as stable
+    CHECK(js.find("\"phonons\": {\"supercell\": [1, 1, 1]") != std::string::npos && js.find("\"assessed\": false") != std::string::npos &&
+          js.find("\"dynamically_stable\": true") == std::string::npos, "report.json screen.phonons block (1x1x1 must be not assessed)");
+    bool claims = false;
+    for (const auto& c : Re.candidates) claims = claims || (c.screened && c.verdict.find("dynamically stable") != std::string::npos);
+    CHECK(!claims, "a verdict claims dynamical stability from a Gamma-only check");
+    bool parsed = true;
+    try { (void)json::parse(js); } catch (const std::exception& e) { parsed = false; std::printf("  %s\n", e.what()); }
+    CHECK(parsed, "report.json with phonons is not valid JSON");
+    std::remove(path.c_str());
+
+    // the full reduced pipeline (solid solutions, MC ordering) on the native LJ, with a non-Zhou element pair
+    SearchOptions full; full.verbose = false; full.ss_seeds = 1; full.mc_sweeps = 2; full.md_steps = 50;
+    full.mc_parents = {"fcc"}; full.mc_fractions = {0.5}; full.volume_per_atom = {38, 38};
+    const auto Rf = binary_search("Ar", "Kr", nat, full);
+    int nmc = 0; for (const auto& c : Rf.candidates) nmc += c.source == "mc-ordering";
+    CHECK(nmc == 1 && Rf.candidates.size() > Re.candidates.size(), "full native LJ search: %zu candidates, %d MC", Rf.candidates.size(), nmc);
+    bool threw = false;
+    try { SearchOptions bad = o; bad.volume_per_atom.clear(); (void)binary_search("Ar", "Kr", nat, bad); } catch (const std::runtime_error& e) { threw = std::string(e.what()).find("volume_per_atom") != std::string::npos; }
+    CHECK(threw, "an element outside the Zhou04 table without volume_per_atom must be rejected");
 }
 
 // ---------------------------------------------------------------- the CLI path
@@ -564,12 +638,33 @@ static void test_external_cli() {
         if (wpid > 0 && !gone) ::kill(pid_t(wpid), SIGKILL);   // exact pid, created by this test
         std::remove(pf.c_str());
     }
+
+    // search end to end through the worker (reduced: one prototype, no solid solutions or MC, Gamma-only phonons)
+    const std::string dir = log_path("cli_search") + ".d";
+    sc = run("/usr/bin/timeout 120s '" + g_cli + "' search Ar Kr --potential \"external:" + lj_command() + "\" --volume 38,38"
+             " --prototypes L1_2 --no-ss --no-mc --md-steps 20 --phonon-supercell 1 --out '" + dir + "'", c);
+    std::ifstream rf(dir + "/report.json");
+    std::stringstream rs; rs << rf.rdbuf();
+    const std::string rep = rs.str();
+    std::printf("  search: status %d, report %zu bytes\n", sc, rep.size());
+    CHECK(sc == 0 && c.find("worker evaluations") != std::string::npos && c.find("not assessed") != std::string::npos &&
+          c.find("dynamically stable") == std::string::npos, "search via the worker (1x1x1 phonons: not assessed): status %d\n%s", sc, c.c_str());
+    CHECK(rep.find("\"potential\": \"external:lj(") != std::string::npos, "report.json does not name the external backend");
+    CHECK(rep.find("\"phonons\": {") != std::string::npos && rep.find("L1_2 Ar3Kr") != std::string::npos, "report.json lacks the screened L1_2 candidate with phonons");
+    bool ok = true;
+    try { (void)json::parse(rep); } catch (const std::exception&) { ok = false; }
+    CHECK(ok, "report.json is not valid JSON");
+    std::filesystem::remove_all(dir);
+    sc = run("'" + g_cli + "' search Ar Kr --potential lj", c);
+    CHECK(sc == 2 && c.find("volume_per_atom") != std::string::npos, "search outside the Zhou04 table without --volume: status %d", sc);
+    sc = run("'" + g_cli + "' search Cu Au --volume 12", c);
+    CHECK(sc == 1 && c.find("--volume expects VA,VB") != std::string::npos, "bad --volume: status %d", sc);
 }
 
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}, {"external_json", test_external_json},
-                            {"external_locale", test_external_locale}, {"external_cli_args", test_external_cli_args}, {"external_cli", test_external_cli}};
+                            {"external_locale", test_external_locale}, {"external_cli_args", test_external_cli_args}, {"external_cli", test_external_cli}, {"external_search", test_external_search}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     if (argc > 2) g_cli = argv[2];
     bool ran = false;
