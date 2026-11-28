@@ -1,0 +1,56 @@
+{
+ "Al|gth-szv-molopt-sr|k2|s0.005|c200|r": {
+  "cycles": 3,
+  "e": -7.99295341721688,
+  "e_zero": -7.996161902999009,
+  "f": -7.999370388781138,
+  "mesh": [
+   52,
+   52,
+   52
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,multigrid)",
+  "nao": 16,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 5.335209131240845,
+  "wall": 5.335217237472534
+ },
+ "NiAl|gth-szv-molopt-sr|k2|s0.005|c200|r": {
+  "cycles": 9,
+  "e": -171.32627306168808,
+  "e_zero": -171.32795266710355,
+  "f": -171.329632272519,
+  "mesh": [
+   37,
+   37,
+   37
+  ],
+  "moment": 0.0,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,multigrid)",
+  "nao": 14,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 9.099119901657104,
+  "wall": 9.099128007888794
+ },
+ "Ni|gth-szv-molopt-sr|k2|s0.005|c200|u": {
+  "cycles": 7,
+  "e": -676.827380447834,
+  "e_zero": -676.8329899642678,
+  "f": -676.8385994807015,
+  "mesh": [
+   46,
+   46,
+   46
+  ],
+  "moment": 1.409714751883198,
+  "name": "pyscf(PBE/gth-szv-molopt-sr/gth-pbe,k=2,2,2,sigma=0.005Ha,cut=200Ha,spin-polarised,multigrid)",
+  "nao": 40,
+  "nk": 8,
+  "nk_ibz": 4,
+  "t_scf": 44.65904259681702,
+  "wall": 44.65905261039734
+ }
+}
