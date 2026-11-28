@@ -48,15 +48,16 @@ def structures():
 
 
 # name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None). The sets are sized for a 4-core machine.
-SZV, DZVP = "gth-szv-molopt-sr", "gth-dzvp-molopt-sr"
+SZV, DZVP, TZVP, TZV2P = "gth-szv-molopt-sr", "gth-dzvp-molopt-sr", "TZVP-MOLOPT-SR-GTH", "TZV2P-MOLOPT-SR-GTH"
 CUT = 400.0     # Hartree; the cutoff table shows the formation energy converged to 0.1 meV/atom there
-BASE = (SZV, 4, 0.005, CUT)
+BASE = (DZVP, 4, 0.005, CUT)
 SETS = {
     "1-cutoff": [(SZV, 2, 0.005, c) for c in (200.0, 400.0, 800.0, None)],
-    "2-kpoints-szv": [(SZV, k, 0.005, CUT) for k in (2, 4, 6)],
-    "3-smearing": [(SZV, 4, s, CUT) for s in (0.01, 0.005, 0.0025)],
-    "4-kpoints-dzvp": [(DZVP, k, 0.005, CUT) for k in (2, 4)],
-    "5-basis": [(b, k, 0.005, CUT) for k in (2, 4) for b in (SZV, DZVP)],
+    "2-smearing": [(SZV, 4, s, CUT) for s in (0.01, 0.005, 0.0025)],
+    "3-kpoints-szv": [(SZV, k, 0.005, CUT) for k in (2, 4, 6, 8, 10)],
+    "4-kpoints-dzvp": [(DZVP, k, 0.005, CUT) for k in (2, 4, 6, 8, 10)],
+    "5-kpoints-tzvp": [(TZVP, k, 0.005, CUT) for k in (4, 6, 8)],
+    "6-basis": [(b, 6, 0.005, CUT) for b in (SZV, DZVP, TZVP, TZV2P)],
 }
 
 
@@ -99,23 +100,23 @@ def need(system, basis, k, sigma, cut, polarised, cache, path, threads, compute)
 def table(name, points, cache, path, threads, compute):
     ev = worker.HARTREE_EV
     print("\n## %s" % name)
-    print("%-20s %2s %7s %6s %4s %9s | %10s %10s | %7s | %8s %8s %8s" % (
+    print("%-19s %2s %7s %6s %4s %9s | %10s %10s | %7s | %8s %8s %8s" % (
         "basis", "k", "sigma", "cut", "nao", "mesh", "Ef(F)", "Ef(s->0)", "m(Ni)", "t(Ni)", "t(Al)", "t(NiAl)"))
-    print("%-20s %2s %7s %6s %4s %9s | %10s %10s | %7s | %8s %8s %8s" % (
+    print("%-19s %2s %7s %6s %4s %9s | %10s %10s | %7s | %8s %8s %8s" % (
         "", "", "Ha", "Ha", "NiAl", "NiAl", "eV/atom", "eV/atom", "muB", "s", "s", "s"))
     for basis, k, sigma, cut in points:
         r = {s: need(s, basis, k, sigma, cut, s == "Ni", cache, path, threads, compute) for s in ("Ni", "Al", "NiAl")}
         cuts = "auto" if cut is None else "%g" % cut
         if any(v is None for v in r.values()):
-            print("%-20s %2d %7g %6s   (not computed)" % (basis, k, sigma, cuts))
+            print("%-19s %2d %7g %6s   (not computed)" % (basis, k, sigma, cuts))
             continue
         bad = [s for s, v in r.items() if "error" in v]
         if bad:
-            print("%-20s %2d %7g %6s   failed: %s" % (basis, k, sigma, cuts, "; ".join("%s: %s" % (s, r[s]["error"]) for s in bad)))
+            print("%-19s %2d %7g %6s   failed: %s" % (basis, k, sigma, cuts, "; ".join("%s: %s" % (s, r[s]["error"]) for s in bad)))
             continue
         ef = (r["NiAl"]["f"] / 2 - r["Ni"]["f"] / 8 - r["Al"]["f"] / 8) * ev
         ez = (r["NiAl"]["e_zero"] / 2 - r["Ni"]["e_zero"] / 8 - r["Al"]["e_zero"] / 8) * ev
-        print("%-20s %2d %7g %6s %4d %9s | %10.4f %10.4f | %7.3f | %8.0f %8.0f %8.0f" % (
+        print("%-19s %2d %7g %6s %4d %9s | %10.4f %10.4f | %7.3f | %8.0f %8.0f %8.0f" % (
             basis, k, sigma, cuts, r["NiAl"]["nao"], "%d^3" % r["NiAl"]["mesh"][0], ef, ez, r["Ni"]["moment"] / 4,
             r["Ni"]["wall"], r["Al"]["wall"], r["NiAl"]["wall"]))
 
