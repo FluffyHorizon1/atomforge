@@ -210,16 +210,26 @@ full hashes are in the records.
 | fcc Al, a (Å) | 4.039 | 4.061 | | 4.050 |
 | B2 NiAl, a (Å) | 2.885 | 2.883 | 2.898 | 2.887 |
 | L1₂ Ni₃Al, a (Å) | 3.561 | 3.556 | 3.582 | 3.57 |
-| B2 NiAl, formation energy (eV/atom) | −0.659 | −0.692 | −0.677 | about −0.61 to −0.68 |
-| L1₂ Ni₃Al, formation energy (eV/atom) | −0.426 | −0.476 | −0.441 | about −0.42 |
+| B2 NiAl, formation energy (eV/atom) | −0.659 | −0.692 | −0.677 | −0.685 (−0.60 to −0.70) |
+| L1₂ Ni₃Al, formation energy (eV/atom) | −0.426 | −0.476 | −0.441 | −0.428 (−0.39 to −0.43) |
 | reference energies Ni, Al (eV/atom) | −5.787, −3.740 | −5.732, −3.728 | | |
 
 The published PBE values are from Lechermann, Fähnle and Sanchez, Intermetallics 13, 1096 (2005) (arXiv:cond-mat/0410285,
 tables 1 and 2: mixed-basis pseudopotential calculations, Ni₃Al ferromagnetic). The experimental formation energies are
-the calorimetric range usually quoted; the primary sources were not re-read for this work. The experimental lattice
-constants of Ni and Al are those of `atomforge validate`. The two models differ by 0.03 eV/atom for NiAl and 0.05 eV/atom
-for Ni₃Al, and both lie within 0.04 eV/atom of the published PBE values. That spread, about 0.05 eV/atom, is the honest
-error bar on the MACE numbers; the Zhou04 EAM is off by 0.7 eV/atom.
+enthalpies of formation measured by aluminium-solution calorimetry at 298–300 K: B2 AlNi −66.1 ± 1.3 and L1₂ AlNi₃
+−41.3 ± 1.3 kJ/mol of atoms (direct-reaction calorimetry: −65.7 ± 1.1 and −39.4 ± 0.6). They are taken from tables 7.1.2,
+7.1.3, 7.3.2 and 7.3.3 of K. Rzyman, Z. Moser and J.-C. Gachon, "Calorimetric studies of the intermetallic compounds from
+Al-Ti and Al-Ni systems", monograph chapter, pp. 93–146, read as the PDF in the RCIN repository of the Polish Academy of
+Sciences (https://rcin.org.pl/ippt/Content/67610/PDF/WA727_25873_55602_Rzyman-Calorimetric.pdf; the enclosing volume
+could not be confirmed from the PDF; its newest references are from 2004). The AlNi₃ solution values, −41.3 to −42.3
+kJ/mol between 300 and 1123 K, were first published by Rzyman et al., J. Phase Equilibria 17, 173 (1996). The earlier
+measurements the chapter tabulates (tables 7.1.4 and 7.3.4) span −58.3 to −67.4 kJ/mol of atoms for AlNi and −37.6 to
+−40.6 for AlNi₃, the ranges in brackets above; that spread across methods, not the ± of one method, is the experimental
+uncertainty. Room-temperature enthalpies are compared here with 0 K energies without zero-point motion.
+The experimental lattice constants of Ni and Al are those of `atomforge validate`. The two models differ by 0.03 eV/atom
+for NiAl and 0.05 eV/atom for Ni₃Al, and both lie within 0.04 eV/atom of the published PBE values and of the
+calorimetric values. That spread, about 0.05 eV/atom, is the honest error bar on the MACE numbers; the Zhou04 EAM is off
+by 0.7 eV/atom.
 
 All four phases are Born-stable and have no imaginary phonon on the commensurate grid with both models (mace-mpa-0, in GPa:
 Ni C11 = 290, C12 = 178, C44 = 136; Al 115, 65, 29; NiAl 214, 149, 117; Ni₃Al 199, 136, 124; phonons on 3×3×3 supercells
