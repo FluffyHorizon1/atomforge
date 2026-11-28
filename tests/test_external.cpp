@@ -4,6 +4,8 @@
 //   test_external <group>    groups: lj external external_relax external_errors
 //   test_external external_search  the binary search pipeline through the bridge vs the native LJ (reduced)
 //   test_external external_cli <path-to-atomforge>   `atomforge relax --potential external:...` end to end
+//   test_external external_pyscf   periodic DFT (PySCF) through the bridge on fcc Al; skipped without the pyscf module
+//   test_external external_mace    a MACE model through the bridge; skipped without mace-torch or ATOMFORGE_MACE_MODEL
 //
 // Groups that need python3 exit with status 77 (CTest SKIP_RETURN_CODE) when it is not on PATH.
 #include "atomforge/atomforge.hpp"
@@ -82,6 +84,14 @@ static long read_pid(const std::string& path) {
 static bool have_python() {
     if (std::system("command -v python3 >/dev/null 2>&1") == 0) return true;
     std::puts("  SKIP: python3 not found on PATH");
+    g_skip = true;
+    return false;
+}
+// The optional backends: `worker.py --check BACKEND` exits 77 when the backend's Python packages are missing.
+static bool have_backend(const char* backend) {
+    const int st = std::system(("python3 '" + kWorker + "' --check " + backend + " >/dev/null 2>&1").c_str());
+    if (WIFEXITED(st) && WEXITSTATUS(st) == 0) return true;
+    std::printf("  SKIP: the %s backend's Python packages are not installed (worker.py --check %s)\n", backend, backend);
     g_skip = true;
     return false;
 }
@@ -661,10 +671,145 @@ static void test_external_cli() {
     CHECK(sc == 1 && c.find("--volume expects VA,VB") != std::string::npos, "bad --volume: status %d", sc);
 }
 
+// ---------------------------------------------------------------- the optional backends, end to end
+// r -> (I + e) r for a symmetric strain e.
+static Structure strained(Structure s, const Mat3& e) {
+    Mat3 F = Mat3::identity();
+    for (int k = 0; k < 9; ++k) F.m[k] += e.m[k];
+    s.deform(F);
+    return s;
+}
+static double trace(const Mat3& m) { return m(0, 0) + m(1, 1) + m(2, 2); }
+
+// Periodic Kohn-Sham DFT through the bridge on the smallest sensible system: the 1-atom primitive cell of fcc Al, PBE,
+// GTH pseudopotential, gth-szv, 2x2x2 k-points, Fermi smearing. The settings are far from converged; the test checks the
+// plumbing (units, sign conventions, energy consistent with the stress, the relaxer driving DFT), not aluminium.
+static void test_external_pyscf() {
+    std::puts("[external_pyscf] PySCF (PBE, GTH, k-points) through the bridge: fcc Al energy, stress vs finite strain, relaxation");
+    if (!have_python() || !have_backend("pyscf")) return;
+    const std::string cmd = "python3 '" + kWorker + "' pyscf --basis gth-szv --kpts 2,2,2 --threads 2";
+    ExternalOptions o; o.log_path = log_path("pyscf"); o.hello_timeout_s = 120; o.eval_timeout_s = 600;
+    const auto t0 = std::chrono::steady_clock::now();
+    auto secs = [&] { return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); };
+    ExternalPotential ext(cmd, {"Al"}, o);
+    CHECK(ext.name().find("external:pyscf(PBE/gth-szv/gth-pbe,k=2,2,2") == 0, "name '%s'", ext.name().c_str());
+    CHECK(std::abs(ext.mass(0) - 26.98) < 0.01, "Al mass %.4f", ext.mass(0));
+
+    const Structure s = primitive_fcc(4.05);
+    const auto e0 = evaluate(s, ext);
+    const double w0 = trace(e0.virial);
+    double off = 0;
+    for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) if (a != b) off = std::max(off, std::abs(e0.virial(a, b)));
+    const double aniso = std::max(std::abs(e0.virial(0, 0) - w0 / 3), std::max(std::abs(e0.virial(1, 1) - w0 / 3), std::abs(e0.virial(2, 2) - w0 / 3)));
+    std::printf("  a = 4.05 A: F = %.6f eV, |force| = %.1e eV/A, tr W = %.5f eV, anisotropy %.1e, off-diagonal %.1e eV  (%.0f s)\n",
+                e0.energy, norm(e0.forces[0]), w0, aniso, off, secs());
+    // Regression value: PySCF 2.15.1, results/pyscf_bridge_fd_log.txt (free energy with 0.01 Ha Fermi smearing).
+    CHECK(std::abs(e0.energy - (-56.499177)) < 5e-3, "energy %.6f eV, expected -56.499177", e0.energy);
+    CHECK(norm(e0.forces[0]) < 1e-5, "force on the only atom %.3e eV/A", norm(e0.forces[0]));
+    CHECK(aniso < 1e-4 && off < 1e-4, "cubic cell: virial not isotropic (%.2e, %.2e eV)", aniso, off);
+    CHECK(w0 < -0.3 && w0 > -1.0, "tr W = %.4f eV: at 4.05 A this basis wants to expand (about -0.64 eV)", w0);
+
+    // The energy must be the quantity the stress is the derivative of (the free energy): finite isotropic strain.
+    const double h = 2e-3;
+    const double ep = evaluate(strained(s, Mat3::diag(h, h, h)), ext).energy;
+    const double em = evaluate(strained(s, Mat3::diag(-h, -h, -h)), ext).energy;
+    const double wfd = (ep - em) / (2 * h);
+    std::printf("  tr W: analytic %.5f eV, finite strain %.5f eV  (%.0f s)\n", w0, wfd, secs());
+    CHECK(std::abs(wfd - w0) < 0.01 * std::abs(w0), "analytic tr W %.5f vs finite strain %.5f eV", w0, wfd);
+
+    // FIRE on the cell volume, driven by the DFT stress.
+    const auto r = relax(s, ext, RelaxOptions{CellMode::Hydrostatic, 2e-2, 40});
+    const double a1 = std::cbrt(4 * r.s.volume());
+    const auto e1 = evaluate(r.s, ext);
+    const double pGPa = trace(e1.virial) / 3 / r.s.volume() * units::eV_per_A3_to_GPa;
+    std::printf("  relaxed: a = %.4f A, F = %.6f eV, %d steps, residual stress %.3f GPa, %ld worker calls  (%.0f s)\n", a1, r.energy,
+                r.steps, pGPa, ext.evaluations(), secs());
+    CHECK(r.converged, "hydrostatic relaxation did not converge in %d steps", r.steps);
+    CHECK(a1 > 4.05 && a1 < 4.6, "relaxed lattice constant %.4f A", a1);
+    CHECK(r.energy < e0.energy - 1e-3, "relaxation did not lower the energy (%.6f -> %.6f eV)", e0.energy, r.energy);
+    CHECK(std::abs(pGPa) < 0.5, "residual stress %.3f GPa", pGPa);
+
+    // The unrestricted (spin-polarised) path: aluminium has no moment, so it must fall back onto the restricted result.
+    ExternalOptions ou = o; ou.log_path = log_path("pyscf_u");
+    ExternalPotential extu(cmd + " --spin-polarised", {"Al"}, ou);
+    const auto u0 = evaluate(s, extu);
+    std::printf("  spin-polarised start: F = %.6f eV (restricted %.6f), tr W = %.5f eV  (%.0f s)\n", u0.energy, e0.energy, trace(u0.virial), secs());
+    CHECK(extu.name().find("spin-polarised") != std::string::npos, "name '%s'", extu.name().c_str());
+    CHECK(std::abs(u0.energy - e0.energy) < 1e-4, "unrestricted %.6f vs restricted %.6f eV", u0.energy, e0.energy);
+    CHECK(std::abs(trace(u0.virial) - w0) < 1e-3, "unrestricted tr W %.5f vs restricted %.5f eV", trace(u0.virial), w0);
+
+    // 3 electrons on 27 k-points cannot be paired. PySCF's restricted smearing would silently add one electron to the
+    // 27 cells; the worker must refuse, and stay usable.
+    ExternalOptions oo = o; oo.log_path = log_path("pyscf_odd");
+    ExternalPotential odd("python3 '" + kWorker + "' pyscf --basis gth-szv --kpts 3,3,3 --threads 2", {"Al"}, oo);
+    bool threw = false; std::string msg;
+    try { (void)evaluate(s, odd); } catch (const ExternalPotentialError& e) { threw = true; msg = e.what(); }
+    CHECK(threw && msg.find("odd number") != std::string::npos && msg.find("--spin-polarised") != std::string::npos,
+          "odd electron count with restricted orbitals was not refused: %s", msg.c_str());
+    CHECK(odd.alive(), "the worker should survive the refusal");
+}
+
+// A MACE foundation model through the bridge. Needs mace-torch and a model file named by ATOMFORGE_MACE_MODEL (the test
+// does not download anything). MACE is a machine-learned potential, not DFT; the last check is the reason it is here:
+// it gives B2 NiAl a formation energy of the right sign and size, which the Zhou04 mixing rule does not.
+static void test_external_mace() {
+    std::puts("[external_mace] MACE through the bridge: forces and virial vs finite differences, B2 NiAl formation energy");
+    if (!have_python()) return;
+    const char* model = std::getenv("ATOMFORGE_MACE_MODEL");
+    if (!model || !*model) { std::puts("  SKIP: ATOMFORGE_MACE_MODEL does not name a model file"); g_skip = true; return; }
+    if (!have_backend("mace")) return;
+    ExternalOptions o; o.log_path = log_path("mace"); o.hello_timeout_s = 300; o.eval_timeout_s = 300;
+    ExternalPotential ext("python3 '" + kWorker + "' mace --model '" + model + "' --threads 2", {"Ni", "Al"}, o);
+    CHECK(ext.name().find("external:mace(") == 0, "name '%s'", ext.name().c_str());
+
+    // rattled B2 NiAl 2x2x2 (16 atoms), slightly sheared
+    Structure s = proto("B2").supercell(2, 2, 2);
+    s.deform(Mat3::diag(2.89, 2.89, 2.89));
+    Mat3 F = Mat3::identity(); F(0, 1) = 0.03; F(2, 2) = 1.02;
+    s.deform(F);
+    s = rattle(s, 0.08, 11);
+    const auto ev = evaluate(s, ext);
+    const double h = 1e-3;
+    double df = 0, fmax = 0, dw = 0, wmax = 0;
+    for (std::size_t i : {std::size_t(0), std::size_t(5)}) for (int k = 0; k < 3; ++k) {
+        Structure p = s, m = s; p.pos[i][k] += h; m.pos[i][k] -= h;
+        const double fd = -(evaluate(p, ext).energy - evaluate(m, ext).energy) / (2 * h);
+        df = std::max(df, std::abs(fd - ev.forces[i][k])); fmax = std::max(fmax, std::abs(ev.forces[i][k]));
+    }
+    for (int a = 0; a < 3; ++a) for (int b = a; b < 3; ++b) {
+        Mat3 e{}; e(a, b) += h / 2; e(b, a) += h / 2;
+        Mat3 me{}; me(a, b) -= h / 2; me(b, a) -= h / 2;
+        const double fd = (evaluate(strained(s, e), ext).energy - evaluate(strained(s, me), ext).energy) / h;
+        dw = std::max(dw, std::abs(fd - ev.virial(a, b))); wmax = std::max(wmax, std::abs(ev.virial(a, b)));
+    }
+    std::printf("  rattled B2 2x2x2: max|F| %.3f eV/A, |F - FD| %.1e;  max|W| %.3f eV, |W - FD| %.1e\n", fmax, df, wmax, dw);
+    CHECK(fmax > 0.05 && wmax > 0.05, "trivial test structure");
+    CHECK(df < 1e-4, "forces differ from finite differences by %.3e eV/A", df);
+    CHECK(dw < 1e-3, "virial differs from finite strain by %.3e eV", dw);
+
+    // formation energy of B2 NiAl against fcc Ni and fcc Al, all three relaxed
+    auto relaxed = [&](const char* p, int a, int b, double a0) {
+        Structure st;
+        for (const auto& pr : prototypes()) if (pr.name.rfind(p, 0) == 0) st = pr.build(a, b);
+        st.deform(Mat3::diag(a0, a0, a0));
+        const auto r = relax(st, ext, RelaxOptions{CellMode::Hydrostatic, 1e-3, 300});
+        CHECK(r.converged, "%s did not relax", p);
+        std::printf("  %-3s a = %.4f A, E = %.5f eV/atom (%d steps)\n", p, std::cbrt(r.s.volume()), r.energy / double(st.size()), r.steps);
+        return std::make_pair(r.energy / double(st.size()), std::cbrt(r.s.volume()));
+    };
+    const auto ni = relaxed("A1", 0, 0, 3.52), al = relaxed("A1", 1, 1, 4.05), b2 = relaxed("B2", 0, 1, 2.89);
+    const double ef = b2.first - 0.5 * (ni.first + al.first);
+    std::printf("  B2 NiAl formation energy %.4f eV/atom (experiment about -0.61 to -0.68; Zhou04 EAM +0.07)\n", ef);
+    CHECK(std::abs(ni.second - 3.52) < 0.05 && std::abs(al.second - 4.05) < 0.06 && std::abs(b2.second - 2.89) < 0.04,
+          "lattice constants %.4f %.4f %.4f A", ni.second, al.second, b2.second);
+    CHECK(ef < -0.5 && ef > -0.85, "B2 NiAl formation energy %.4f eV/atom", ef);
+}
+
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
     const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}, {"external_json", test_external_json},
-                            {"external_locale", test_external_locale}, {"external_cli_args", test_external_cli_args}, {"external_cli", test_external_cli}, {"external_search", test_external_search}};
+                            {"external_locale", test_external_locale}, {"external_cli_args", test_external_cli_args}, {"external_cli", test_external_cli}, {"external_search", test_external_search},
+                            {"external_pyscf", test_external_pyscf}, {"external_mace", test_external_mace}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     if (argc > 2) g_cli = argv[2];
     bool ran = false;
@@ -676,7 +821,7 @@ int main(int argc, char** argv) {
         ran = true;
     }
     if (!ran) { std::fprintf(stderr, "unknown test group '%s'\n", want); return 2; }
-    std::printf("\n%d checks passed, %d failed%s\n", g_pass, g_fail, g_skip ? " (some groups skipped: python3 not found)" : "");
+    std::printf("\n%d checks passed, %d failed%s\n", g_pass, g_fail, g_skip ? " (some groups skipped: python3, a backend's packages or a model file not found)" : "");
     if (g_fail) return 1;
     return (g_skip && g_pass == 0) ? 77 : 0;
 }

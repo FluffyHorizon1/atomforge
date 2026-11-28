@@ -6,7 +6,8 @@ ExternalPotential appends to its log file. The protocol is documented in docs/EX
 
     python3 quantum/worker.py lj    [--epsilon EV] [--sigma A] [--rc A] [--mass AMU]
     python3 quantum/worker.py pyscf [--basis gth-szv] [--pseudo gth-pbe] [--xc pbe] [--kpts 2,2,2] [--smearing HA]
-    python3 quantum/worker.py mace  [--model medium] [--device cpu]
+                                    [--ke-cutoff HA] [--spin-polarised] [--multigrid] [--threads N]
+    python3 quantum/worker.py mace  [--model medium|FILE] [--device cpu] [--threads N]
     python3 quantum/worker.py --check BACKEND     exit 0 if BACKEND can run here, 77 if its packages are missing
 
 Units on the wire: A, eV, eV/A. "virial" is W_ab = dE/d(eps_ab) in eV (tensile positive); "stress" is W/V in eV/A^3.
@@ -154,33 +155,48 @@ class LJ:
 
 
 class PySCF:
-    """Periodic Kohn-Sham DFT (PySCF), as in quantum/pyscf_dft_probe.py: GTH pseudopotentials, k-point mesh, Fermi smearing."""
+    """Periodic Kohn-Sham DFT (PySCF), as in quantum/pyscf_dft_probe.py: GTH pseudopotentials, k-point mesh, Fermi smearing.
+
+    Spin-restricted (KRKS) by default. --spin-polarised runs KUKS from an initial guess with more spin-up than spin-down
+    density; with smearing there is one Fermi level for both spins, so the moment is free to settle or to vanish."""
 
     def __init__(self, o):
+        import pyscf
         from pyscf import lib  # noqa: F401  (ImportError -> clean refusal)
         from pyscf.pbc import gto, dft  # noqa: F401
-        from pyscf.pbc.grad import krks_stress  # noqa: F401
+        from pyscf.pbc.grad import krks_stress, kuks_stress  # noqa: F401
         if o.threads:
             lib.num_threads(o.threads)
         self.o = o
         self.kmesh = [int(x) for x in o.kpts.split(",")]
         if len(self.kmesh) != 3 or min(self.kmesh) < 1:
             raise ValueError("pyscf: --kpts must be three positive integers, e.g. 2,2,2")
-        self.name = "pyscf(%s/%s/%s,k=%s,sigma=%gHa)" % (o.xc.upper(), o.basis, o.pseudo, o.kpts, o.smearing)
+        if o.ke_cutoff is not None and not o.ke_cutoff > 0:
+            raise ValueError("pyscf: --ke-cutoff must be positive (Hartree)")
+        self.name = "pyscf(%s/%s/%s,k=%s,sigma=%gHa" % (o.xc.upper(), o.basis, o.pseudo, o.kpts, o.smearing)
+        if o.ke_cutoff is not None:
+            self.name += ",cut=%gHa" % o.ke_cutoff
+        if o.spin_polarised:
+            self.name += ",spin-polarised"
+        if o.multigrid:
+            self.name += ",multigrid"
+        self.name += ")"
         self.cutoff = 0.0
         self.dm = None
         self.last_key = None
+        log("pyscf %s, %d thread(s)" % (pyscf.__version__, lib.num_threads()))
 
     def masses(self, elements):
         from pyscf.data import elements as el
         return [float(el.MASSES[el.charge(s)]) for s in elements]
 
-    def evaluate(self, cell_a, pos, species, symbols):
+    def scf(self, cell_a, pos, symbols):
+        """Run the SCF and return (mf, info); info has the energies in Hartree, the cell moment and the timings."""
         import numpy as np
         from pyscf.pbc import gto, dft
         from pyscf.pbc.scf.addons import smearing_
-        from pyscf.pbc.grad import krks_stress
         o = self.o
+        t0 = time.time()
         cell = gto.Cell()
         cell.atom = [(s, tuple(p)) for s, p in zip(symbols, pos)]
         cell.a = cell_a
@@ -188,28 +204,80 @@ class PySCF:
         cell.basis = o.basis
         cell.pseudo = o.pseudo
         cell.verbose = 0
+        if o.ke_cutoff is not None:
+            cell.ke_cutoff = o.ke_cutoff
         cell.build()
         kpts = cell.make_kpts(self.kmesh)
-        mf = smearing_(dft.KRKS(cell, kpts).set(xc=o.xc, conv_tol=o.conv_tol), sigma=o.smearing, method="fermi")
-        key = tuple(symbols)
+        if o.spin_polarised:
+            # PySCF counts the unpaired electrons of KUKS over all k-points. Only the parity has to be consistent here:
+            # the smearing sets the occupations, with one Fermi level for both spins.
+            cell.spin = (cell.nelectron * len(kpts)) % 2
+        elif (cell.nelectron * len(kpts)) % 2:
+            # Restricted orbitals hold electron pairs. PySCF's smeared KRKS then rounds the count up to the next pair
+            # without an error: fcc Al (3 electrons) on 3x3x3 k-points is computed with 82 electrons on 27 k-points,
+            # 3.037 per cell, a charged cell with an energy about 0.3 eV too high.
+            raise RuntimeError("%d electrons per cell on %d k-points is an odd number: spin-restricted DFT would run a "
+                               "charged cell. Use --spin-polarised, or a k-mesh with an even number of points"
+                               % (cell.nelectron, len(kpts)))
+        ks = dft.KUKS(cell, kpts) if o.spin_polarised else dft.KRKS(cell, kpts)
+        ks.set(xc=o.xc, conv_tol=o.conv_tol, max_cycle=o.max_cycle)
+        self.numint = ks._numint
+        if o.multigrid:
+            # The multigrid integrator builds the density and the Coulomb and exchange-correlation matrices on a
+            # hierarchy of grids. For Ni (semi-core GTH potential, 85^3 grid points in B2 NiAl) the SCF is about 17
+            # times faster and the energy agrees with the single-grid one to 1e-9 Ha. It has no k-point gradients, so
+            # evaluate() puts the standard integrator back for the forces and the stress.
+            from pyscf.pbc.dft import multigrid
+            ks._numint = multigrid.MultiGridNumInt(cell)
+        mf = smearing_(ks, sigma=o.smearing, method="fermi")
+        key = (tuple(symbols), bool(o.spin_polarised), tuple(int(x) for x in cell.mesh))
         dm0 = self.dm if (self.dm is not None and key == self.last_key) else None
+        if dm0 is None and o.spin_polarised:
+            dm0 = np.array(mf.get_init_guess())            # (2, nk, nao, nao), equal spins
+            dm0[0] *= 1.0 + o.init_polarisation
+            dm0[1] *= 1.0 - o.init_polarisation
+        ncyc = [0]
+        mf.callback = lambda env: ncyc.__setitem__(0, ncyc[0] + 1)
         e = mf.kernel(dm0=dm0)
         if not mf.converged:
-            raise RuntimeError("SCF did not converge")
-        self.dm, self.last_key = mf.make_rdm1(), key
+            raise RuntimeError("SCF did not converge in %d cycles" % o.max_cycle)
+        dm = mf.make_rdm1()
+        self.dm, self.last_key = dm, key
+        moment = 0.0
+        if o.spin_polarised:
+            s1e = mf.get_ovlp()
+            moment = float(sum(np.einsum("ij,ji->", dm[0][k] - dm[1][k], s1e[k]).real for k in range(len(kpts))) / len(kpts))
+        # With smearing the SCF minimises the Mermin free energy F = E - sigma*S, and the analytic forces and stress are
+        # derivatives of F, not of E. F is the energy the bridge gets, so that energy, forces and stress are consistent.
+        f = getattr(mf, "e_free", None)
+        f = float(e) if f is None else float(f)
+        ez = getattr(mf, "e_zero", None)
+        ez = float(e) if ez is None else float(ez)
+        info = {"e": float(e), "f": f, "e_zero": ez, "moment": moment, "cycles": ncyc[0], "nao": int(cell.nao),
+                "mesh": [int(x) for x in cell.mesh], "nk": len(kpts), "t_scf": time.time() - t0}
+        return mf, info
+
+    def evaluate(self, cell_a, pos, species, symbols):
+        import numpy as np
+        from pyscf.pbc.grad import krks_stress, kuks_stress
+        mf, info = self.scf(cell_a, pos, symbols)
+        t0 = time.time()
+        mf._numint = self.numint
         g = mf.nuc_grad_method()
-        grad = np.asarray(g.kernel())                      # dE/dR, Ha/Bohr
-        sigma = np.asarray(krks_stress.kernel(g))          # (1/V) dE/d(eps), Ha/Bohr^3
+        grad = np.asarray(g.kernel())                      # dF/dR, Ha/Bohr
+        t1 = time.time()
+        stress_mod = kuks_stress if self.o.spin_polarised else krks_stress
+        sigma = np.asarray(stress_mod.kernel(g))           # (1/V) dF/d(eps), Ha/Bohr^3
+        t2 = time.time()
         forces = (-grad * HARTREE_EV / BOHR_A).tolist()
         stress = (sigma * HARTREE_EV / BOHR_A ** 3)
         stress = (0.5 * (stress + stress.T)).tolist()
-        # With smearing the SCF minimises the Mermin free energy F = E - sigma*S, and the analytic forces and stress are
-        # derivatives of F, not of E. Return F so that energy, forces and stress are consistent (FIRE needs that).
-        f = getattr(mf, "e_free", None)
-        f = float(e) if f is None else float(f)
-        log("E = %.8f Ha  F = %.8f Ha  max|g| = %.3e" % (e, f, float(np.abs(grad).max())))
-        return {"energy": f * HARTREE_EV, "energy_sigma0": float(getattr(mf, "e_zero", e) or e) * HARTREE_EV,
-                "forces": forces, "stress": stress}
+        log("E = %.8f Ha  F = %.8f Ha  max|g| = %.3e  moment = %.3f muB  %d cycles  scf %.1f s  grad %.1f s  stress %.1f s"
+            % (info["e"], info["f"], float(np.abs(grad).max()), info["moment"], info["cycles"], info["t_scf"], t1 - t0, t2 - t1))
+        out = {"energy": info["f"] * HARTREE_EV, "energy_sigma0": info["e_zero"] * HARTREE_EV, "forces": forces, "stress": stress}
+        if self.o.spin_polarised:
+            out["moment"] = info["moment"]
+        return out
 
 
 class MACE:
@@ -254,7 +322,7 @@ class MACE:
 
 
 BACKENDS = {"lj": LJ, "pyscf": PySCF, "mace": MACE}
-REQUIRES = {"lj": [], "pyscf": ["numpy", "pyscf", "pyscf.pbc.grad.krks_stress"], "mace": ["numpy", "ase", "mace.calculators"]}
+REQUIRES = {"lj": [], "pyscf": ["numpy", "pyscf", "pyscf.pbc.grad.krks_stress", "pyscf.pbc.grad.kuks_stress"], "mace": ["numpy", "ase", "mace.calculators"]}
 
 
 def check(backend):
@@ -304,7 +372,7 @@ def watchdog():
     threading.Thread(target=run, daemon=True).start()
 
 
-def main(argv):
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("backend", nargs="?", choices=sorted(BACKENDS))
     ap.add_argument("--check", metavar="BACKEND", choices=sorted(BACKENDS))
@@ -319,7 +387,15 @@ def main(argv):
     ap.add_argument("--kpts", default="2,2,2")
     ap.add_argument("--smearing", type=float, default=0.01, help="Fermi smearing width in Hartree")
     ap.add_argument("--conv-tol", type=float, default=1e-9)
-    ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--max-cycle", type=int, default=100, help="pyscf: SCF cycle limit")
+    ap.add_argument("--ke-cutoff", type=float, default=None, help="pyscf: plane-wave cutoff of the density grid in Hartree "
+                    "(default: PySCF's estimate from the basis)")
+    ap.add_argument("--multigrid", action="store_true", help="pyscf: run the SCF with PySCF's multigrid integrator "
+                    "(same energy, much faster for hard pseudopotentials); forces and stress use the standard one")
+    ap.add_argument("--spin-polarised", action="store_true", help="pyscf: unrestricted (KUKS) with a polarised initial guess")
+    ap.add_argument("--init-polarisation", type=float, default=0.2,
+                    help="pyscf --spin-polarised: the initial guess has (1+p)/2 of the density spin-up")
+    ap.add_argument("--threads", type=int, default=0, help="pyscf, mace: number of threads (0: the library default)")
     ap.add_argument("--model", default="medium")
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--fault", choices=["crash", "hang", "nan", "shape", "garbage", "badid", "error", "spawn-exit", "errnull"],
@@ -328,6 +404,11 @@ def main(argv):
     ap.add_argument("--delay", type=float, default=0.0, help="testing aid: sleep this many seconds before each reply")
     ap.add_argument("--noisy", action="store_true", help="testing aid: print to stdout (Python and fd 1) at start and per request")
     ap.add_argument("--pid-file", help="testing aid: write this process's pid to the file")
+    return ap
+
+
+def main(argv):
+    ap = build_parser()
     o = ap.parse_args(argv)
     if o.check:
         return check(o.check)
