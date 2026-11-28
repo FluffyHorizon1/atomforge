@@ -1,0 +1,24 @@
+{
+  "system": ["Ni", "Al"],
+  "potential": "external:mace(mace-mpa-0-medium.model)",
+  "reference": {"Ni": {"phase": "Ni A1 (fcc)", "mu": -5.78666}, "Al": {"phase": "Al A1 (fcc)", "mu": -3.74}},
+  "hull": [{"x": 0, "ef": 0, "id": 0}, {"x": 0.25, "ef": -0.426231, "id": 6}, {"x": 0.5, "ef": -0.659286, "id": 8}, {"x": 1, "ef": 0, "id": 3}],
+  "candidates": [
+    {"id": 0, "label": "A1 (fcc) Ni", "source": "element", "parent": "fcc", "natoms": 4, "x": 0, "e_per_atom": -5.78666, "ef": 0, "e_hull": 0, "vol_per_atom": 10.9162, "converged": true},
+    {"id": 1, "label": "A2 (bcc) Ni", "source": "element", "parent": "bcc", "natoms": 2, "x": 0, "e_per_atom": -5.70151, "ef": 0.0851548, "e_hull": 0.0851548, "vol_per_atom": 10.9087, "converged": true},
+    {"id": 2, "label": "A3 (hcp) Ni", "source": "element", "parent": "hcp", "natoms": 2, "x": 0, "e_per_atom": -5.77185, "ef": 0.0148144, "e_hull": 0.0148144, "vol_per_atom": 10.897, "converged": true},
+    {"id": 3, "label": "A1 (fcc) Al", "source": "element", "parent": "fcc", "natoms": 4, "x": 1, "e_per_atom": -3.74, "ef": 0, "e_hull": 0, "vol_per_atom": 16.468, "converged": true},
+    {"id": 4, "label": "A2 (bcc) Al", "source": "element", "parent": "bcc", "natoms": 2, "x": 1, "e_per_atom": -3.65262, "ef": 0.0873862, "e_hull": 0.0873862, "vol_per_atom": 16.7937, "converged": true},
+    {"id": 5, "label": "A3 (hcp) Al", "source": "element", "parent": "hcp", "natoms": 2, "x": 1, "e_per_atom": -3.7218, "ef": 0.0181985, "e_hull": 0.0181985, "vol_per_atom": 16.4569, "converged": true},
+    {"id": 6, "label": "L1_2 Ni3Al", "source": "prototype", "parent": "fcc", "natoms": 4, "x": 0.25, "e_per_atom": -5.70123, "ef": -0.426231, "e_hull": 0, "vol_per_atom": 11.2921, "converged": true, "screen": {"verdict": "STABLE (on hull, mechanically + thermally + dynamically stable)", "bulk_GPa": 156.929, "shear_GPa": 86.6708, "min_C_eig_GPa": 62.7195, "C11": 198.742, "C12": 136.022, "C44": 123.545, "md_T": 600, "md_rms_disp": 0.139002, "dE_quench": 8.46877e-08, "max_site_shift": 7.44687e-05, "phonons": {"supercell": [3, 3, 3], "n_q": 27, "min_THz": -4.20361e-05, "max_THz": 9.32477, "gamma_acoustic_THz": 4.20361e-05, "n_imaginary": 0, "imag_tol_THz": 0.1, "asr_violation_eV_A2": 9.96436e-14, "min_width_A": 10.684, "assessed": true, "dynamically_stable": true, "evaluations": 24}}},
+    {"id": 7, "label": "L1_2 NiAl3", "source": "prototype", "parent": "fcc", "natoms": 4, "x": 0.75, "e_per_atom": -4.47345, "ef": -0.221783, "e_hull": 0.10786, "vol_per_atom": 13.7841, "converged": true},
+    {"id": 8, "label": "L1_0 NiAl", "source": "prototype", "parent": "fcc", "natoms": 4, "x": 0.5, "e_per_atom": -5.42262, "ef": -0.659286, "e_hull": 0, "vol_per_atom": 12.0018, "converged": true, "screen": {"verdict": "STABLE (on hull, mechanically + thermally + dynamically stable)", "bulk_GPa": 170.894, "shear_GPa": 83.4625, "min_C_eig_GPa": 32.6851, "C11": 299.114, "C12": 64.4742, "C44": 117.322, "md_T": 600, "md_rms_disp": 0.153594, "dE_quench": 7.86013e-08, "max_site_shift": 0.000623502, "phonons": {"supercell": [3, 3, 4], "n_q": 36, "min_THz": -7.11232e-05, "max_THz": 10.4145, "gamma_acoustic_THz": 7.11232e-05, "n_imaginary": 0, "imag_tol_THz": 0.1, "asr_violation_eV_A2": 5.59761e-14, "min_width_A": 11.5385, "assessed": true, "dynamically_stable": true, "evaluations": 24}}},
+    {"id": 9, "label": "L1_1 NiAl", "source": "prototype", "parent": "fcc", "natoms": 2, "x": 0.5, "e_per_atom": -5.17587, "ef": -0.412534, "e_hull": 0.246752, "vol_per_atom": 12.4564, "converged": true},
+    {"id": 10, "label": "B2 NiAl", "source": "prototype", "parent": "bcc", "natoms": 2, "x": 0.5, "e_per_atom": -5.42262, "ef": -0.659286, "e_hull": 2.74968e-08, "vol_per_atom": 12.0024, "converged": true},
+    {"id": 11, "label": "D0_3 Ni3Al", "source": "prototype", "parent": "bcc", "natoms": 16, "x": 0.25, "e_per_atom": -5.64417, "ef": -0.369171, "e_hull": 0.0570601, "vol_per_atom": 11.3345, "converged": true},
+    {"id": 12, "label": "D0_3 NiAl3", "source": "prototype", "parent": "bcc", "natoms": 16, "x": 0.75, "e_per_atom": -4.32944, "ef": -0.0777767, "e_hull": 0.251867, "vol_per_atom": 14.1489, "converged": true},
+    {"id": 13, "label": "C15 NiAl2", "source": "prototype", "parent": "other", "natoms": 24, "x": 0.666667, "e_per_atom": -4.26847, "ef": 0.153752, "e_hull": 0.593276, "vol_per_atom": 13.6946, "converged": true},
+    {"id": 14, "label": "C15 Ni2Al", "source": "prototype", "parent": "other", "natoms": 24, "x": 0.333333, "e_per_atom": -5.37294, "ef": -0.268496, "e_hull": 0.23542, "vol_per_atom": 12.1157, "converged": true},
+    {"id": 15, "label": "B1 NiAl", "source": "prototype", "parent": "other", "natoms": 8, "x": 0.5, "e_per_atom": -4.80232, "ef": -0.0389843, "e_hull": 0.620302, "vol_per_atom": 14.45, "converged": true}
+  ]
+}
