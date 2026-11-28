@@ -40,14 +40,17 @@ def structures():
     }
 
 
-# name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None)
-BASE = ("gth-dzvp-molopt-sr", 4, 0.005, None)
+# name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None). The sets are sized for a 4-core machine:
+# one spin-polarised SCF of fcc Ni costs about 13 minutes at szv, 4x4x4, and grows with the number of k-points of the
+# full mesh and with the square of the basis size.
+SZV, DZVP = "gth-szv-molopt-sr", "gth-dzvp-molopt-sr"
+BASE = (SZV, 4, 0.005, None)
 SETS = {
-    "kpoints": [("gth-dzvp-molopt-sr", k, 0.005, None) for k in (2, 4, 6, 8)],
-    "kpoints-szv": [("gth-szv-molopt-sr", k, 0.005, None) for k in (2, 4, 6, 8)],
-    "basis": [(b, 4, 0.005, None) for b in ("gth-szv-molopt-sr", "gth-dzvp-molopt-sr")],
-    "smearing": [("gth-dzvp-molopt-sr", 6, s, None) for s in (0.02, 0.01, 0.005, 0.0025)],
-    "cutoff": [("gth-dzvp-molopt-sr", 4, 0.005, c) for c in (150.0, None, 400.0, 600.0)],
+    "1-kpoints-szv": [(SZV, k, 0.005, None) for k in (2, 4, 6)],
+    "2-kpoints-dzvp": [(DZVP, k, 0.005, None) for k in (2, 4)],
+    "3-basis": [(b, k, 0.005, None) for k in (2, 4) for b in (SZV, DZVP)],
+    "4-smearing": [(SZV, 4, s, None) for s in (0.01, 0.005)],
+    "5-cutoff": [(SZV, 2, 0.005, c) for c in (200.0, 400.0, 800.0, None)],
 }
 
 

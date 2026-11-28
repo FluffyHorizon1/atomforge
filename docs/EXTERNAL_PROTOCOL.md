@@ -94,7 +94,7 @@ atomforge then throws `ExternalPotentialError` with that message, and the worker
 atomforge also closes the worker's stdin. A worker should exit when it reads `exit` or end of file. A worker that has not
 exited after 2 s is killed.
 
-Replies may carry extra fields (the `pyscf` backend adds `energy_sigma0`, the energy extrapolated to zero smearing);
+Replies may carry extra fields (the `pyscf` backend adds `energy_sigma0`, the energy extrapolated to zero smearing, and `moment` when spin-polarised);
 atomforge ignores them. `"error": null` counts as no error. atomforge writes numbers in the shortest form that reads back
 exactly (`std::to_chars`) and reads them with `std::from_chars`, so the C locale (a decimal comma, say) does not matter.
 
@@ -126,7 +126,8 @@ running`; atomforge does not restart workers. Messages include the tail of the s
 ```
 python3 quantum/worker.py lj    [--epsilon 0.0104[,EPS_B,...]] [--sigma 3.40[,SIG_B,...]] [--rc 8.5] [--mass 39.948] [--reply virial|stress]
 python3 quantum/worker.py pyscf [--basis gth-szv] [--pseudo gth-pbe] [--xc pbe] [--kpts 2,2,2] [--smearing 0.01] [--threads N]
-python3 quantum/worker.py mace  [--model medium] [--device cpu]
+                                [--spin-polarised] [--multigrid] [--ke-cutoff HA] [--max-cycle 100]
+python3 quantum/worker.py mace  [--model medium|FILE] [--device cpu] [--threads N]
 python3 quantum/worker.py --check pyscf     # exit 0 if usable here, 77 if its packages are missing
 ```
 
@@ -138,9 +139,20 @@ python3 quantum/worker.py --check pyscf     # exit 0 if usable here, 77 if its p
 - `pyscf` runs periodic Kohn–Sham DFT with the settings of `quantum/pyscf_dft_probe.py` (GTH pseudopotentials, k-point
   mesh, Fermi smearing in Hartree), returns the free energy with its analytic forces and stress, and reuses the previous density matrix as
   the initial guess when the atoms are the same species in the same order.
-  It is spin-restricted (KRKS): magnetic elements such as Fe, Co and Ni are computed non-magnetic.
-- `mace` uses the MACE foundation model through ASE, in double precision. The model is downloaded on first use, inside
-  the handshake, so the first start can need more than the default 60 s handshake timeout (`--worker-hello-timeout S`).
+  It is spin-restricted (KRKS) by default: magnetic elements such as Fe, Co and Ni are then computed non-magnetic.
+  `--spin-polarised` runs unrestricted (KUKS) from an initial guess with 60% of the density spin-up
+  (`--init-polarisation 0.2`); with smearing there is one Fermi level for both spins, so the moment settles freely, and
+  the reply carries it as the extra field `moment` (μB per cell). A spin-restricted run whose electron count over the
+  k-mesh is odd (fcc Al, 3 valence electrons, on 3×3×3 k-points) is answered with an `error` reply: PySCF's smeared KRKS
+  would add an electron to make pairs and compute a charged cell without saying so. `--multigrid` runs the SCF with
+  PySCF's multigrid integrator, which gives the same energy and is much faster for hard pseudopotentials; the forces
+  and the stress are then computed with the standard integrator. `--ke-cutoff` sets the plane-wave cutoff of the
+  density grid in Hartree (default: PySCF's estimate from the basis).
+- `mace` uses a MACE foundation model through ASE, in double precision. `--model` is a name that `mace_mp` knows, which
+  is downloaded on first use, inside the handshake, so the first start can need more than the default 60 s handshake
+  timeout (`--worker-hello-timeout S`), or the path of a model file. For a file the handshake `name` is
+  `mace(<file name>)` and the log records the file's SHA-256 with the mace-torch, torch and ASE versions. MACE is a
+  machine-learned potential fitted to DFT data, not DFT.
 
-`--check pyscf` imports `pyscf.pbc.grad.krks_stress` too, and `--check mace` imports `mace.calculators`. A missing optional
+`--check pyscf` imports `pyscf.pbc.grad.krks_stress` and `kuks_stress` too, and `--check mace` imports `mace.calculators`. A missing optional
 package makes the worker refuse the handshake with `<backend> backend unavailable: ...` and exit 77.
