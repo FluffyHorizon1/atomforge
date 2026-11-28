@@ -4,11 +4,16 @@
 Periodic Kohn-Sham DFT, PBE, GTH pseudopotentials (Ni q18, Al q3), Gaussian basis, Fermi smearing. Three total energies
 per setting, all at the experimental lattice constants:
 
-    fcc Ni   a = 3.524 A, 1-atom primitive cell, spin-polarised (KUKS)
-    fcc Al   a = 4.050 A, 1-atom primitive cell, spin-restricted
-    B2 NiAl  a = 2.887 A, 2-atom cell, spin-restricted (one setting is repeated spin-polarised: no moment survives)
+    fcc Ni   a = 3.524 A, 4-atom cubic cell, spin-polarised (KUKS)
+    fcc Al   a = 4.050 A, 4-atom cubic cell, spin-restricted
+    B2 NiAl  a = 2.887 A, 2-atom cubic cell, spin-restricted (one setting is repeated spin-polarised)
 
-    E_f = [E(NiAl) - E(Ni) - E(Al)] / 2      eV per atom
+    E_f = E(NiAl)/2 - E(Ni)/8 - E(Al)/8      eV per atom
+
+The fcc elements are computed in the cubic cell, not the 1-atom primitive one, because PySCF's multigrid integrator is
+far slower in a non-orthogonal cell (fcc Ni, primitive cell, 2x2x2 k-points, 45^3 grid: 485 s for one SCF). The same
+k-mesh "k" is therefore a denser sampling for the larger fcc cells than for B2 NiAl; each energy has to converge on
+its own.
 
 The SCF is the one the bridge runs (worker.PySCF.scf with --multigrid); only the forces and the stress, which a
 fixed-geometry energy does not need, are left out. quantum/worker.py refuses a spin-restricted run whose electron count
@@ -32,17 +37,17 @@ A_NI, A_AL, A_B2 = 3.524, 4.050, 2.887
 
 
 def structures():
-    h, g, b = A_NI / 2, A_AL / 2, A_B2
+    def fcc(a, el):   # conventional cubic cell, 4 atoms
+        return ([[a, 0, 0], [0, a, 0], [0, 0, a]], [[0, 0, 0], [0, a / 2, a / 2], [a / 2, 0, a / 2], [a / 2, a / 2, 0]], [el] * 4)
+    b = A_B2
     return {
-        "Ni": ([[0, h, h], [h, 0, h], [h, h, 0]], [[0, 0, 0]], ["Ni"]),
-        "Al": ([[0, g, g], [g, 0, g], [g, g, 0]], [[0, 0, 0]], ["Al"]),
+        "Ni": fcc(A_NI, "Ni"),
+        "Al": fcc(A_AL, "Al"),
         "NiAl": ([[b, 0, 0], [0, b, 0], [0, 0, b]], [[0, 0, 0], [b / 2, b / 2, b / 2]], ["Ni", "Al"]),
     }
 
 
-# name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None). The sets are sized for a 4-core machine:
-# one spin-polarised SCF of fcc Ni costs about 13 minutes at szv, 4x4x4, and grows with the number of k-points of the
-# full mesh and with the square of the basis size.
+# name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None). The sets are sized for a 4-core machine.
 SZV, DZVP = "gth-szv-molopt-sr", "gth-dzvp-molopt-sr"
 BASE = (SZV, 4, 0.005, None)
 SETS = {
@@ -107,10 +112,10 @@ def table(name, points, cache, path, threads, compute):
         if bad:
             print("%-20s %2d %7g %6s   failed: %s" % (basis, k, sigma, cuts, "; ".join("%s: %s" % (s, r[s]["error"]) for s in bad)))
             continue
-        ef = (r["NiAl"]["f"] - r["Ni"]["f"] - r["Al"]["f"]) / 2 * ev
-        ez = (r["NiAl"]["e_zero"] - r["Ni"]["e_zero"] - r["Al"]["e_zero"]) / 2 * ev
+        ef = (r["NiAl"]["f"] / 2 - r["Ni"]["f"] / 8 - r["Al"]["f"] / 8) * ev
+        ez = (r["NiAl"]["e_zero"] / 2 - r["Ni"]["e_zero"] / 8 - r["Al"]["e_zero"] / 8) * ev
         print("%-20s %2d %7g %6s %4d %9s | %10.4f %10.4f | %7.3f | %8.0f %8.0f %8.0f" % (
-            basis, k, sigma, cuts, r["NiAl"]["nao"], "%d^3" % r["NiAl"]["mesh"][0], ef, ez, r["Ni"]["moment"],
+            basis, k, sigma, cuts, r["NiAl"]["nao"], "%d^3" % r["NiAl"]["mesh"][0], ef, ez, r["Ni"]["moment"] / 4,
             r["Ni"]["wall"], r["Al"]["wall"], r["NiAl"]["wall"]))
 
 
