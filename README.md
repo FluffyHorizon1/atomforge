@@ -32,9 +32,10 @@ Hull structures can go straight to DFT for verification.
 ./build/atomforge search Cu Au --materials   # also writes results/CuAu/materials-contract-CuAu.json
 ```
 
-Writes the interchange sidecar proposed in qpuforge
-[`docs/DATA_CONTRACT.md`](https://github.com/FluffyHorizon1/qpuforge/blob/f64238f/docs/DATA_CONTRACT.md)
-(branch `docs/materials-data-contract`, commit `f64238f`); the writer is `include/atomforge/materials.hpp`.
+Writes the interchange sidecar defined in qpuforge
+[`docs/DATA_CONTRACT.md`](https://github.com/FluffyHorizon1/qpuforge/blob/main/docs/DATA_CONTRACT.md) (on qpuforge
+`main`; first proposed on branch `docs/materials-data-contract`, commit `f64238f`); the writer is
+`include/atomforge/materials.hpp`.
 
 - **Real (computed by the EAM model):** `produced_by`, `system`, `structures_ref`, and an additive optional block
   `atomforge_computed` with elemental references and hull phases (energies, formation energies, cell edges and angles, Born
@@ -43,6 +44,20 @@ Writes the interchange sidecar proposed in qpuforge
   `junction_gap_ueV`. They are listed in the top-level `placeholders` array. Do not copy them into a chip JSON.
 
 The contract is still a proposal, so the format may change.
+
+**Cross-repo check (qpuforge reader).** `.github/workflows/qpuforge-crosscheck.yml` builds qpuforge's sidecar reader at a
+pinned ref and runs `tools/qpuforge_crosscheck.sh`: `atomforge search Cu Au --quick --materials` writes the sidecar,
+`qpuforge analyze designs/alpha1-v11/alpha1_v11.json --materials <it>` must exit 0 and skip all three quantities as
+placeholders, and, when that qpuforge has `materials apply`, the saved chip copy must record the sidecar's SHA-256. It is
+the one check that fails when either repository changes the format alone (decision D3, qpuforge
+`docs/design/q16-materials-ingestion.md`). The job is **non-blocking** (`continue-on-error`); `ci.yml` stays the merge
+gate. The qpuforge ref is the `qpuforge_ref` input of a manual run (Actions → "qpuforge reader cross-check" → Run
+workflow), else the repository variable `QPUFORGE_REF`, else `main`; pin a full commit SHA to reproduce a run. A private
+qpuforge needs a read-only token in the secret `QPUFORGE_READ_TOKEN`. Locally:
+
+```bash
+bash tools/qpuforge_crosscheck.sh build/atomforge ../qpuforge/build/qpuforge ../qpuforge
+```
 
 ## Energy model
 

@@ -1,0 +1,87 @@
+# Cross-repo check of the forge.materials.v0 sidecar (decision D3, qpuforge docs/design/q16-materials-ingestion.md):
+# build qpuforge's reader at a pinned ref and let it read the sidecar this atomforge commit writes.
+#
+# Non-blocking: the job has continue-on-error, so a qpuforge ref that does not build (or a private qpuforge without
+# a token) shows as a failed step in this workflow but never fails atomforge's own CI (.github/workflows/ci.yml),
+# which stays the merge gate. Make it required only by an explicit branch-protection change.
+#
+# qpuforge ref: the workflow_dispatch input `qpuforge_ref`, else the repository variable QPUFORGE_REF, else `main`.
+# Pin a branch or a full commit SHA there to reproduce a run. If qpuforge is private, add a read-only token for it as
+# the secret QPUFORGE_READ_TOKEN (contents: read on FluffyHorizon1/qpuforge); without it the default GITHUB_TOKEN is
+# used, which can only read public repositories.
+name: qpuforge reader cross-check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      qpuforge_ref:
+        description: "qpuforge branch, tag or commit SHA whose sidecar reader to build"
+        required: false
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  qpuforge-reader:
+    name: qpuforge reader reads atomforge's sidecar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      QPUFORGE_REF: ${{ inputs.qpuforge_ref || vars.QPUFORGE_REF || 'main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out qpuforge (${{ env.QPUFORGE_REF }})
+        uses: actions/checkout@v4
+        with:
+          repository: FluffyHorizon1/qpuforge
+          ref: ${{ env.QPUFORGE_REF }}
+          path: qpuforge
+          token: ${{ secrets.QPUFORGE_READ_TOKEN || github.token }}
+
+      - name: Install toolchain
+        run: |
+          # The ubuntu-24.04 image ships a packages.microsoft.com source that
+          # intermittently returns 403 and fails apt-get update (see a03).
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/microsoft-prod.sources
+          sudo sed -i '/packages\.microsoft\.com/d' /etc/apt/sources.list \
+            /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+          ok=0
+          for attempt in 1 2 3 4 5; do
+            if sudo apt-get -o Acquire::Retries=5 update; then ok=1; break; fi
+            echo "apt-get update failed (attempt $attempt); retrying..."
+            sleep $((attempt * 4))
+          done
+          if [ "$ok" != 1 ]; then echo "apt-get update failed after retries" >&2; exit 100; fi
+          sudo apt-get -o Acquire::Retries=5 install -y cmake ninja-build g++
+
+      - name: Build atomforge CLI
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++ -DATOMFORGE_NATIVE=OFF
+          cmake --build build --target atomforge_cli --parallel
+
+      - name: Build qpuforge CLI (the reader)
+        run: |
+          cmake -S qpuforge -B qpuforge/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=g++
+          cmake --build qpuforge/build --target qpuforge_cli --parallel
+
+      - name: Cross-check
+        run: |
+          echo "atomforge $(git rev-parse HEAD), qpuforge $(git -C qpuforge rev-parse HEAD) (ref $QPUFORGE_REF)" | tee -a "$GITHUB_STEP_SUMMARY"
+          bash tools/qpuforge_crosscheck.sh build/atomforge qpuforge/build/qpuforge qpuforge crosscheck-out | tee crosscheck.txt
+          rc=${PIPESTATUS[0]}
+          { echo '```'; cat crosscheck.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload cross-check output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qpuforge-crosscheck
+          path: crosscheck-out
+          if-no-files-found: ignore
