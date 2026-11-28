@@ -14,6 +14,10 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <clocale>
+#include <csignal>
+#include <filesystem>
+#include <unistd.h>
 #include <sys/wait.h>
 
 #ifndef ATOMFORGE_SOURCE_DIR
@@ -26,12 +30,47 @@ static bool g_skip = false;
 #define CHECK(cond, ...) do { if (cond) { ++g_pass; } else { ++g_fail; std::printf("  FAIL %s:%d  ", __FILE__, __LINE__); std::printf(__VA_ARGS__); std::printf("\n"); } } while (0)
 
 static const std::string kWorker = std::string(ATOMFORGE_SOURCE_DIR) + "/quantum/worker.py";
-static const LJParams kLJ{0.0104, 3.40, 8.5, 39.948};
+static LJParams make_lj(bool per_species) {
+    LJParams p; p.epsilon = 0.0104; p.sigma = 3.40; p.rc = 8.5; p.mass = 39.948;
+    if (per_species) { p.epsilon_by_species = {0.0104, 0.0141}; p.sigma_by_species = {3.40, 3.65}; }   // Ar-like, Kr-like
+    return p;
+}
+static const LJParams kLJ = make_lj(false);
+static const LJParams kLJ2 = make_lj(true);   // species-dependent: catches species mix-ups in the bridge
 
-static std::string lj_command(const std::string& extra = "") {
-    char b[160];
-    std::snprintf(b, sizeof b, " lj --epsilon %.17g --sigma %.17g --rc %.17g --mass %.17g", kLJ.epsilon, kLJ.sigma, kLJ.rc, kLJ.mass);
+static std::string lj_command(const std::string& extra = "", const LJParams& p = kLJ) {
+    char b[320];
+    if (p.epsilon_by_species.empty())
+        std::snprintf(b, sizeof b, " lj --epsilon %.17g --sigma %.17g --rc %.17g --mass %.17g", p.epsilon, p.sigma, p.rc, p.mass);
+    else
+        std::snprintf(b, sizeof b, " lj --epsilon %.17g,%.17g --sigma %.17g,%.17g --rc %.17g --mass %.17g", p.epsilon_by_species[0],
+                      p.epsilon_by_species[1], p.sigma_by_species[0], p.sigma_by_species[1], p.rc, p.mass);
     return "python3 '" + kWorker + "'" + b + (extra.empty() ? "" : " " + extra);
+}
+// Exact-PID liveness (never pgrep -f: that matches unrelated command lines). A zombie counts as dead.
+static bool pid_alive(long pid) {
+    if (pid <= 0) return false;
+    std::FILE* f = std::fopen(("/proc/" + std::to_string(pid) + "/stat").c_str(), "r");
+    if (!f) return ::kill(pid_t(pid), 0) == 0 && !std::filesystem::exists("/proc/self");   // no procfs: kill(0) fallback
+    char buf[512] = {0};
+    const std::size_t n = std::fread(buf, 1, sizeof buf - 1, f);
+    std::fclose(f);
+    const char* rp = std::strrchr(buf, ')');
+    return n > 0 && rp && rp[1] == ' ' && rp[2] != 'Z' && rp[2] != 'X';
+}
+static bool wait_dead(long pid, double secs) {
+    for (int k = 0; k < int(secs * 20); ++k) { if (!pid_alive(pid)) return true; ::usleep(50000); }
+    return !pid_alive(pid);
+}
+static long read_pid(const std::string& path) {
+    for (int k = 0; k < 100; ++k) {   // up to 5 s for the process to write it
+        std::FILE* f = std::fopen(path.c_str(), "r");
+        long pid = 0;
+        if (f) { if (std::fscanf(f, "%ld", &pid) != 1) pid = 0; std::fclose(f); }
+        if (pid > 0) return pid;
+        ::usleep(50000);
+    }
+    return 0;
 }
 static bool have_python() {
     if (std::system("command -v python3 >/dev/null 2>&1") == 0) return true;
@@ -142,6 +181,40 @@ static void test_external() {
         CHECK(dw < 1e-9, "%s: virial differs by %.3e eV", c.name, dw);
     }
     CHECK(ext.evaluations() == 4 && ext.alive(), "worker should have served 4 requests and still be alive (%ld)", ext.evaluations());
+
+    // Species-dependent parameters on both sides (Lorentz-Berthelot), so a species mix-up in the bridge would show; once
+    // with "virial" replies and once with "stress" replies (W/V, the form the pyscf and mace backends send).
+    LennardJones nat2({"Ar", "Kr"}, kLJ2);
+    auto two = [](Structure x) { for (std::size_t i = 0; i < x.size(); i += 2) x.species[i] = 1; return x; };
+    const Structure mixed[] = {two(fcc_rattled(6)), two(triclinic(9))};
+    for (const char* mode : {"virial", "stress"}) {
+        ExternalOptions o2 = o; o2.log_path = log_path(mode);
+        ExternalPotential e2(lj_command(std::string("--reply ") + mode, kLJ2), {"Ar", "Kr"}, o2);
+        for (const auto& st : mixed) {
+            const auto a = evaluate(st, nat2), b = evaluate(st, e2);
+            double df = 0, dw = 0;
+            for (std::size_t i = 0; i < st.size(); ++i) df = std::max(df, norm(a.forces[i] - b.forces[i]));
+            for (int k = 0; k < 9; ++k) dw = std::max(dw, std::abs(a.virial.m[k] - b.virial.m[k]));
+            std::printf("  two species, per-pair LJ, %-6s replies, N=%-3zu E=%.6f |dE|=%.1e |dF|=%.1e |dW|=%.1e\n", mode, st.size(), a.energy,
+                        std::abs(a.energy - b.energy), df, dw);
+            CHECK(std::abs(a.energy - b.energy) < 1e-9 && df < 1e-9 && dw < 1e-9, "%s replies: dE %.3e dF %.3e dW %.3e", mode, a.energy - b.energy, df, dw);
+        }
+        // the species really matter: swapping them changes the energy
+        Structure sw = mixed[0]; for (auto& sp : sw.species) sp = 1 - sp;
+        CHECK(std::abs(evaluate(sw, nat2).energy - evaluate(mixed[0], nat2).energy) > 1e-3, "per-species LJ does not depend on species");
+    }
+
+    // A worker whose backend prints to stdout (Python print and raw writes to fd 1, at start-up and per request, as
+    // mace_mp does) still speaks clean protocol: worker.py moves the channel off fd 1.
+    {
+        ExternalOptions on = o; on.log_path = log_path("noisy"); std::remove(on.log_path.c_str());
+        ExternalPotential noisy(lj_command("--noisy"), {"Ar", "Kr"}, on);
+        const Structure st = fcc_rattled(3);
+        const double d = std::abs(evaluate(st, noisy).energy - evaluate(st, nat).energy);
+        std::ifstream lf(on.log_path); std::stringstream ls; ls << lf.rdbuf();
+        CHECK(d < 1e-9, "noisy worker: energy differs by %.3e", d);
+        CHECK(ls.str().find("noisy: raw fd 1 write during evaluate") != std::string::npos, "noisy output did not reach the log");
+    }
 }
 
 // ---------------------------------------------------------------- FIRE through the bridge
@@ -194,6 +267,19 @@ static void expect_error(const char* what, Fn&& fn, const char* needle, double m
 }
 static void test_external_errors() {
     std::puts("[external_errors] missing worker, crash, timeout, NaN, wrong shape, bad JSON, wrong id: clear exceptions, no hang");
+    // JSON parser corner cases (no python3 needed)
+    CHECK(std::isnan(json::parse("{\"e\": NaN}").get("e")->num), "NaN token");
+    CHECK(json::parse("[1, -2.5e-3, \"a\\\"b\", true, null]").arr.size() == 5, "array parse");
+    auto rejects = [](const std::string& t) { try { (void)json::parse(t); } catch (const ExternalPotentialError&) { return true; } return false; };
+    CHECK(rejects("{\"e\": 1,}"), "trailing comma must be rejected");
+    CHECK(rejects(std::string("[1\0 5]", 6)), "an embedded NUL must be rejected");
+    CHECK(rejects("[1.5.2]") && rejects("[01x]"), "malformed numbers must be rejected");
+    CHECK(json::num(0.1) == "0.1" && json::parse("[" + json::num(1.0 / 3) + "]").arr[0].num == 1.0 / 3, "round trip of doubles");
+    // Locale independence: with a decimal-comma locale, numbers are still written and read with a point.
+    if (std::setlocale(LC_ALL, "de_DE.UTF-8") || std::setlocale(LC_ALL, "de_DE") || std::setlocale(LC_ALL, "fr_FR.UTF-8")) {
+        CHECK(json::num(8.5) == "8.5" && json::parse("[8.5]").arr[0].num == 8.5, "number formatting depends on the locale");
+        std::setlocale(LC_ALL, "C");
+    } else std::puts("  (no decimal-comma locale installed: locale check limited to the C locale)");
     if (!have_python()) return;
     const Structure s = fcc_rattled(8);
     ExternalOptions o; o.hello_timeout_s = 20; o.eval_timeout_s = 20;
@@ -202,6 +288,9 @@ static void test_external_errors() {
     expect_error("worker missing", [&] { ExternalPotential p("/nonexistent/atomforge-worker --x", {"Ar"}, with("missing")); }, "exit status 127");
     expect_error("worker missing (stderr in message)", [&] { ExternalPotential p("/nonexistent/atomforge-worker", {"Ar"}, with("missing2")); }, "worker stderr");
     expect_error("worker exits before handshake", [&] { ExternalPotential p("sh -c 'echo boom >&2; exit 4'", {"Ar"}, with("early")); }, "exit status 4");
+    // The worker exits but a process it started keeps the socket open: noticed by the exit, not by end of file.
+    expect_error("exit with a child holding the socket", [&] { ExternalPotential p("sh -c 'sleep 47.123 & exit 4'", {"Ar"}, with("holder")); }, "exit status 4", 5);
+    expect_error("unusable log path", [&] { ExternalOptions x = o; x.log_path = "/nonexistent-atomforge-dir/w.log"; ExternalPotential p(lj_command(), {"Ar"}, x); }, "cannot open worker log");
     expect_error("silent worker (handshake timeout)", [&] { ExternalOptions x = with("silent"); x.hello_timeout_s = 1;
                                                              ExternalPotential p("sleep 30", {"Ar"}, x); }, "timed out", 5);
     expect_error("wrong protocol version", [&] { ExternalPotential p("sh -c 'read l; echo \"{\\\"protocol\\\": 99}\"; sleep 5'", {"Ar"}, with("proto")); }, "protocol 99");
@@ -214,9 +303,30 @@ static void test_external_errors() {
         expect_error("call after a crash", [&] { evaluate(s, p); }, "not running");
     }
     {
+        ExternalPotential p(lj_command("--fault spawn-exit"), {"Ar"}, with("spawnexit"));
+        expect_error("exit mid-request, child keeps socket", [&] { evaluate(s, p); }, "exit status 5", 5);
+    }
+    {
         ExternalOptions x = with("hang"); x.eval_timeout_s = 1.5;
         ExternalPotential p(lj_command("--fault hang"), {"Ar"}, x);
         expect_error("worker hangs (eval timeout 1.5 s)", [&] { evaluate(s, p); }, "timed out", 6);
+    }
+    {
+        ExternalOptions x = with("inf"); x.eval_timeout_s = HUGE_VAL; x.hello_timeout_s = 1e300;   // no deadline, no overflow
+        ExternalPotential p(lj_command(), {"Ar"}, x);
+        CHECK(evaluate(s, p).forces.size() == s.size(), "infinite timeouts");
+        Structure bad = s; bad.pos[2].y = std::nan("");
+        expect_error("NaN position (not sent)", [&] { evaluate(bad, p); }, "not finite");
+        CHECK(p.alive(), "a rejected input must not kill the worker");
+        Structure badc = s; badc.cell(1, 1) = HUGE_VAL;
+        expect_error("infinite cell (not sent)", [&] { evaluate(badc, p); }, "not finite");
+        CHECK(evaluate(s, p).forces.size() == s.size(), "worker still serves after rejected inputs");
+    }
+    {
+        ExternalPotential p(lj_command("--fault errnull"), {"Ar"}, with("errnull"));
+        bool ok = true;
+        try { evaluate(s, p); } catch (const std::exception& e) { ok = false; std::printf("  %s\n", e.what()); }
+        CHECK(ok, "a reply with \"error\": null must count as success");
     }
     {
         ExternalPotential p(lj_command("--fault nan"), {"Ar"}, with("nan"));
@@ -252,18 +362,33 @@ static void test_external_errors() {
         if (f) std::fclose(f);
         CHECK(txt.find("[worker] started lj(") != std::string::npos, "worker stderr not in log %s: '%s'", x.log_path.c_str(), txt.c_str());
     }
-    // A failed worker's children die with it (the worker runs in its own process group).
-    expect_error("worker with a background child", [&] { ExternalPotential p("sh -c 'sleep 7.3125 & read l; echo garbage; sleep 9'", {"Ar"}, with("child")); }, "malformed JSON");
-    const int stray = std::system("pgrep -f '[s]leep 7.3125' >/dev/null 2>&1");
-    CHECK(stray != 0, "the worker's background child survived the worker");
-    if (stray == 0 && std::system("pkill -f '[s]leep 7.3125'") != 0) std::puts("  (pkill failed)");
+    // A failed worker's children die with it (the worker runs in its own process group). Checked by exact PID.
+    {
+        const std::string pf = log_path("childpid") + ".pid";
+        std::remove(pf.c_str());
+        expect_error("worker with a background child", [&] {
+            ExternalPotential p("sh -c 'sleep 7.3125 & echo $! > " + pf + "; read l; echo garbage; sleep 9'", {"Ar"}, with("child")); }, "malformed JSON");
+        const long child = read_pid(pf);
+        CHECK(child > 0 && wait_dead(child, 3), "the worker's background child (pid %ld) survived the worker", child);
+        std::remove(pf.c_str());
+    }
+    // A worker killed without a word: the message quotes this instance's stderr only, not an earlier run's.
+    {
+        ExternalOptions x = with("sections");
+        { std::FILE* f = std::fopen(x.log_path.c_str(), "w"); if (f) { std::fputs("OLD-RUN-MARKER\n", f); std::fclose(f); } }
+        std::string msg;
+        try { ExternalPotential p("sh -c 'echo NEW-RUN-MARKER >&2; exit 3'", {"Ar"}, x); } catch (const ExternalPotentialError& e) { msg = e.what(); }
+        CHECK(msg.find("NEW-RUN-MARKER") != std::string::npos && msg.find("OLD-RUN-MARKER") == std::string::npos, "log tail mixes runs: %s", msg.c_str());
+        ExternalOptions d1 = o, d2 = o;
+        ExternalPotential p1(lj_command(), {"Ar"}, d1), p2(lj_command(), {"Ar"}, d2);
+        CHECK(p1.log_path() != p2.log_path(), "two potentials share the default log %s", p1.log_path().c_str());
+    }
+    // Commands with shell operators run without the "exec" prefix (a leading builtin works).
+    {
+        ExternalPotential p("cd '" + std::string(ATOMFORGE_SOURCE_DIR) + "/quantum' && python3 worker.py lj", {"Ar"}, with("cd"));
+        CHECK(evaluate(s, p).forces.size() == s.size(), "cd ... && worker");
+    }
 
-    // JSON parser corner cases
-    CHECK(std::isnan(json::parse("{\"e\": NaN}").get("e")->num), "NaN token");
-    CHECK(json::parse("[1, -2.5e-3, \"a\\\"b\", true, null]").arr.size() == 5, "array parse");
-    bool threw = false;
-    try { json::parse("{\"e\": 1,}"); } catch (const ExternalPotentialError&) { threw = true; }
-    CHECK(threw, "trailing comma must be rejected");
 }
 
 // ---------------------------------------------------------------- the CLI path
@@ -284,9 +409,24 @@ static double field(const std::string& out, const char* key) {
 static void test_external_cli() {
     std::puts("[external_cli] atomforge relax --potential external:\"python3 quantum/worker.py lj\" matches --potential lj");
     if (g_cli.empty()) { std::puts("  SKIP: no atomforge path given"); g_skip = true; return; }
-    if (!have_python()) return;
     std::string a, b, c;
-    const std::string base = "/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --volume 40 --no-elastic";
+    const std::string cli = "/usr/bin/timeout 60s '" + g_cli + "'";
+    const std::string base = cli + " relax A1 Ar --volume 40 --no-elastic";
+    // Exit codes without python3: 1 for usage / argument errors, 2 for failures while running.
+    int sc = run(base + " --potential bogus", c);
+    CHECK(sc == 2 && c.find("unknown --potential") != std::string::npos, "bogus spec: status %d", sc);
+    sc = run(cli + " relax A1 Ar --potential lj", c);
+    CHECK(sc == 2 && c.find("--volume") != std::string::npos, "element without a reference volume: status %d", sc);
+    sc = run(cli + " relax L1_2 Cu Xx", c);
+    CHECK(sc == 2 && c.find("no parameters for Xx") != std::string::npos, "unsupported element: status %d '%s'", sc, c.c_str());
+    sc = run(cli + " relax L1_2 Cu Au extra", c);
+    CHECK(sc == 1 && c.find("unexpected argument extra") != std::string::npos, "extra argument: status %d", sc);
+    sc = run(cli + " relax A1 Cu --fmax nope", c);
+    CHECK(sc == 1 && c.find("--fmax expects") != std::string::npos, "bad option value: status %d", sc);
+    sc = run(base + " --potential external:true --worker-log /nonexistent-atomforge-dir/w.log", c);
+    CHECK(sc == 2 && c.find("cannot open worker log") != std::string::npos, "unusable --worker-log: status %d '%s'", sc, c.c_str());
+    if (!have_python()) return;
+
     const int sa = run(base + " --potential lj", a);
     const int sb = run(base + " --potential \"external:" + lj_command() + "\" --worker-log '" + log_path("cli") + "'", b);
     std::printf("%s%s", a.c_str(), b.c_str());
@@ -294,12 +434,28 @@ static void test_external_cli() {
     CHECK(b.find("potential: external:lj(") != std::string::npos && b.find("worker evaluations") != std::string::npos, "external run output");
     const double ea = field(a, "E = "), eb = field(b, "E = "), va = field(a, "V = "), vb = field(b, "V = ");
     CHECK(std::abs(ea - eb) < 1e-12 && std::abs(va - vb) < 1e-12 && ea < -0.07, "E %.6f vs %.6f, V %.4f vs %.4f", ea, eb, va, vb);
-    int sc = run(base + " --potential external:/nonexistent/worker", c);
+    sc = run(base + " --potential external:/nonexistent/worker", c);
     CHECK(sc == 2 && c.find("error:") != std::string::npos && c.find("exit status 127") != std::string::npos, "missing worker: status %d '%s'", sc, c.c_str());
-    sc = run(base + " --potential bogus", c);
-    CHECK(sc == 2 && c.find("unknown --potential") != std::string::npos, "bogus spec: status %d", sc);
-    sc = run("/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --potential lj", c);
-    CHECK(sc == 2 && c.find("--volume") != std::string::npos, "element without a reference volume: status %d", sc);
+    sc = run(base + " --worker-timeout inf --potential \"external:" + lj_command() + "\"", c);
+    CHECK(sc == 0, "--worker-timeout inf: status %d", sc);
+
+    // atomforge killed (Ctrl-C = SIGINT, or SIGKILL) while the worker is busy: the worker must not outlive it. Once with
+    // worker.py (which also has its own watchdog), once with a plain shell worker that relies on atomforge's supervisor.
+    struct Kill { const char* sig; bool shell; };
+    for (const Kill k : {Kill{"INT", false}, Kill{"KILL", false}, Kill{"INT", true}}) {
+        const char* sig = k.sig;
+        const std::string pf = log_path("orphan") + "." + sig + (k.shell ? ".sh" : "") + ".pid";
+        std::remove(pf.c_str());
+        const std::string worker = k.shell ? "sh -c 'echo $$ > " + pf + "; exec sleep 30'" : lj_command("--fault hang --pid-file " + pf);
+        sc = run(std::string("/usr/bin/timeout -s ") + sig + " 2 '" + g_cli + "' relax A1 Ar --volume 40 --potential \"external:" + worker + "\"", c);
+        const long wpid = read_pid(pf);
+        const bool gone = wpid > 0 && wait_dead(wpid, 5);
+        std::printf("  SIG%s to atomforge mid-%s (%s worker): status %d, worker pid %ld %s\n", sig, k.shell ? "handshake" : "evaluation",
+                    k.shell ? "shell" : "worker.py", sc, wpid, gone ? "exited" : "STILL RUNNING");
+        CHECK(wpid > 0 && gone, "worker %ld outlived atomforge after SIG%s", wpid, sig);
+        if (wpid > 0 && !gone) ::kill(pid_t(wpid), SIGKILL);   // exact pid, created by this test
+        std::remove(pf.c_str());
+    }
 }
 
 int main(int argc, char** argv) {
