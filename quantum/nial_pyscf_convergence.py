@@ -49,13 +49,14 @@ def structures():
 
 # name -> list of (basis, k, sigma in Hartree, ke_cutoff in Hartree or None). The sets are sized for a 4-core machine.
 SZV, DZVP = "gth-szv-molopt-sr", "gth-dzvp-molopt-sr"
-BASE = (SZV, 4, 0.005, None)
+CUT = 400.0     # Hartree; the cutoff table shows the formation energy converged to 0.1 meV/atom there
+BASE = (SZV, 4, 0.005, CUT)
 SETS = {
-    "1-kpoints-szv": [(SZV, k, 0.005, None) for k in (2, 4, 6)],
-    "2-kpoints-dzvp": [(DZVP, k, 0.005, None) for k in (2, 4)],
-    "3-basis": [(b, k, 0.005, None) for k in (2, 4) for b in (SZV, DZVP)],
-    "4-smearing": [(SZV, 4, s, None) for s in (0.01, 0.005)],
-    "5-cutoff": [(SZV, 2, 0.005, c) for c in (200.0, 400.0, 800.0, None)],
+    "1-cutoff": [(SZV, 2, 0.005, c) for c in (200.0, 400.0, 800.0, None)],
+    "2-kpoints-szv": [(SZV, k, 0.005, CUT) for k in (2, 4, 6)],
+    "3-smearing": [(SZV, 4, s, CUT) for s in (0.01, 0.005, 0.0025)],
+    "4-kpoints-dzvp": [(DZVP, k, 0.005, CUT) for k in (2, 4)],
+    "5-basis": [(b, k, 0.005, CUT) for k in (2, 4) for b in (SZV, DZVP)],
 }
 
 

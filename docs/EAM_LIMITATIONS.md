@@ -47,6 +47,11 @@ value, and the pin becomes an acceptance test for that backend (planned mileston
 failure of `eam_nial` means the EAM failure *changed*, and the message says which README paragraph, which page (this one) and
 which result files to update together.
 
+That has now happened for a machine-learned backend. Through `ExternalPotential`, a MACE foundation model gives B2 NiAl
+−0.66 eV/atom and puts NiAl and L1₂ Ni₃Al on the hull (README, "Ni–Al through the bridge"; records under `results/NiAl_mace*`),
+and the test `external_mace` asserts the B2 formation energy for that backend. `eam_nial` stays as it is: it pins the
+built-in EAM, which has not changed.
+
 ## 2. Other limitations of the model and the search
 
 From `README.md` ("Limitations", "Validation") and the committed runs:
