@@ -14,6 +14,8 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <fcntl.h>
+#include <poll.h>
 #include <clocale>
 #include <csignal>
 #include <filesystem>
@@ -265,8 +267,8 @@ static void expect_error(const char* what, Fn&& fn, const char* needle, double m
     CHECK(msg.find(needle) != std::string::npos, "%s: message lacks '%s': %s", what, needle, msg.c_str());
     CHECK(secs < max_s, "%s: took %.1f s", what, secs);
 }
-static void test_external_errors() {
-    std::puts("[external_errors] missing worker, crash, timeout, NaN, wrong shape, bad JSON, wrong id: clear exceptions, no hang");
+static void test_external_json() {
+    std::puts("[external_json] the protocol's JSON reader and number formatting (no python3 needed)");
     // JSON parser corner cases (no python3 needed)
     CHECK(std::isnan(json::parse("{\"e\": NaN}").get("e")->num), "NaN token");
     CHECK(json::parse("[1, -2.5e-3, \"a\\\"b\", true, null]").arr.size() == 5, "array parse");
@@ -275,11 +277,44 @@ static void test_external_errors() {
     CHECK(rejects(std::string("[1\0 5]", 6)), "an embedded NUL must be rejected");
     CHECK(rejects("[1.5.2]") && rejects("[01x]"), "malformed numbers must be rejected");
     CHECK(json::num(0.1) == "0.1" && json::parse("[" + json::num(1.0 / 3) + "]").arr[0].num == 1.0 / 3, "round trip of doubles");
-    // Locale independence: with a decimal-comma locale, numbers are still written and read with a point.
-    if (std::setlocale(LC_ALL, "de_DE.UTF-8") || std::setlocale(LC_ALL, "de_DE") || std::setlocale(LC_ALL, "fr_FR.UTF-8")) {
-        CHECK(json::num(8.5) == "8.5" && json::parse("[8.5]").arr[0].num == 8.5, "number formatting depends on the locale");
-        std::setlocale(LC_ALL, "C");
-    } else std::puts("  (no decimal-comma locale installed: locale check limited to the C locale)");
+}
+
+// Locale independence: with a decimal-comma locale active, numbers are still written and read with a point. The locale is
+// generated with localedef into a temporary LOCPATH, so the check does not depend on what the machine has installed.
+static void test_external_locale() {
+    std::puts("[external_locale] JSON numbers under a de_DE (decimal comma) locale");
+    const std::string cmd = lj_command();   // snprintf in lj_command is locale dependent: build it in the C locale
+    const std::string dir = log_path("locale") + ".d";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const bool made = std::system(("localedef -i de_DE -f UTF-8 '" + dir + "/de_DE.UTF-8' >/dev/null 2>&1").c_str()) == 0;
+    if (made) ::setenv("LOCPATH", dir.c_str(), 1);
+    if (!made || !std::setlocale(LC_ALL, "de_DE.UTF-8")) {
+        std::puts("  SKIP: cannot create or load a de_DE.UTF-8 locale (localedef and the de_DE locale sources are needed)");
+        g_skip = true;
+        std::filesystem::remove_all(dir);
+        return;
+    }
+    char probe[32]; std::snprintf(probe, sizeof probe, "%.1f", 8.5);
+    std::printf("  printf(\"%%.1f\", 8.5) in this locale gives \"%s\"\n", probe);
+    CHECK(std::string(probe) == "8,5", "the generated locale does not use a decimal comma (got %s)", probe);
+    CHECK(json::num(8.5) == "8.5" && json::num(-1e-300) == "-1e-300", "json::num depends on the locale: %s", json::num(8.5).c_str());
+    CHECK(json::parse("[8.5, 2.25e3]").arr[0].num == 8.5 && json::parse("[8.5, 2.25e3]").arr[1].num == 2250, "json::parse depends on the locale");
+    if (std::system("command -v python3 >/dev/null 2>&1") == 0) {   // the handshake sends cutoff 8.5 and LJ numbers
+        ExternalOptions o; o.log_path = log_path("locale");
+        ExternalPotential p(cmd, {"Ar"}, o);
+        CHECK(std::abs(p.cutoff() - 8.5) < 1e-12, "cutoff read as %.6g under de_DE", p.cutoff());
+        const auto a = evaluate(fcc_rattled(1), p);
+        LennardJones nat({"Ar"}, kLJ);
+        CHECK(std::abs(a.energy - evaluate(fcc_rattled(1), nat).energy) < 1e-9, "bridge result differs under de_DE");
+    }
+    std::setlocale(LC_ALL, "C");
+    ::unsetenv("LOCPATH");
+    std::filesystem::remove_all(dir);
+}
+
+static void test_external_errors() {
+    std::puts("[external_errors] missing worker, crash, timeout, NaN, wrong shape, bad JSON, wrong id: clear exceptions, no hang");
     if (!have_python()) return;
     const Structure s = fcc_rattled(8);
     ExternalOptions o; o.hello_timeout_s = 20; o.eval_timeout_s = 20;
@@ -383,6 +418,67 @@ static void test_external_errors() {
         ExternalPotential p1(lj_command(), {"Ar"}, d1), p2(lj_command(), {"Ar"}, d2);
         CHECK(p1.log_path() != p2.log_path(), "two potentials share the default log %s", p1.log_path().c_str());
     }
+    // N1: the supervisor is an exec'd shell: host descriptors without FD_CLOEXEC do not leak into it or the worker, and
+    // host signal handlers do not run in it.
+    {
+        int pfd[2] = {-1, -1};
+        CHECK(::pipe(pfd) == 0, "pipe");   // no FD_CLOEXEC, on purpose
+        for (int& f : pfd) { const int hi = ::fcntl(f, F_DUPFD, 50); ::close(f); f = hi; }   // above the fds the child sets up
+        ExternalPotential p(lj_command(), {"Ar"}, with("fdleak"));
+        ::close(pfd[1]);
+        pollfd q{pfd[0], POLLIN, 0};
+        const int r = ::poll(&q, 1, 2000);
+        char ch = 0;
+        const ssize_t n = r > 0 ? ::read(pfd[0], &ch, 1) : -1;
+        CHECK(r == 1 && n == 0, "a host pipe's write end is held by the supervisor or worker (poll %d, read %zd)", r, n);
+        ::close(pfd[0]);
+        CHECK(evaluate(s, p).forces.size() == s.size(), "worker after the fd check");
+    }
+    {
+        // The host catches SIGTERM in one case and ignores it in the other (an ignored signal, unlike a handler, would
+        // survive exec), and blocks SIGUSR1; the supervisor must still die of the default action.
+        static volatile std::sig_atomic_t hits = 0;
+        for (int mode = 0; mode < 2; ++mode) {
+            struct sigaction sa{}, old{};
+            if (mode == 0) sa.sa_handler = [](int) { hits = hits + 1; };
+            else sa.sa_handler = SIG_IGN;
+            sigemptyset(&sa.sa_mask);
+            ::sigaction(SIGTERM, &sa, &old);
+            sigset_t blk, oldmask; sigemptyset(&blk); sigaddset(&blk, SIGUSR1);
+            ::sigprocmask(SIG_BLOCK, &blk, &oldmask);
+            ExternalPotential p(lj_command(), {"Ar"}, with("sigterm"));
+            ::sigprocmask(SIG_SETMASK, &oldmask, nullptr);
+            ::sigaction(SIGTERM, &old, nullptr);
+            const pid_t sup = p.supervisor_pid();
+            ::kill(sup, SIGTERM);
+            const bool died = wait_dead(sup, 3);
+            CHECK(died && hits == 0, "%s SIGTERM in the host: the supervisor did not die of it (died %d, host handler hits %d)",
+                  mode == 0 ? "caught" : "ignored", int(died), int(hits));
+            ExternalPotential q(lj_command(), {"Ar"}, with("sigusr1"));
+            ::kill(q.supervisor_pid(), SIGUSR1);
+            CHECK(wait_dead(q.supervisor_pid(), 3), "a signal blocked in the host stayed blocked in the supervisor");
+        }
+    }
+    // N4: a host that ignores SIGCHLD (children are reaped automatically): exits are still noticed, the destructor is quick.
+    {
+        struct sigaction ign{}, old{};
+        ign.sa_handler = SIG_IGN;
+        sigemptyset(&ign.sa_mask);
+        ::sigaction(SIGCHLD, &ign, &old);
+        expect_error("SIGCHLD ignored: exit, child holds socket", [&] { ExternalPotential p("sh -c 'sleep 47.5 & exit 4'", {"Ar"}, with("sigchld")); }, "worker exited", 5);
+        const auto t0 = std::chrono::steady_clock::now();
+        { ExternalPotential p(lj_command(), {"Ar"}, with("sigchld2")); evaluate(s, p); }
+        const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        CHECK(secs < 1.5, "with SIGCHLD ignored, start + evaluate + shutdown took %.2f s", secs);
+        ::sigaction(SIGCHLD, &old, nullptr);
+    }
+    // N5: a worker killed by a signal is reported as such (the supervisor re-raises it without dumping its own core).
+    expect_error("worker killed by SIGSEGV", [&] { ExternalPotential p("sh -c 'kill -SEGV $$'", {"Ar"}, with("segv")); }, "killed by signal 11", 3);
+    // N3: a leading variable assignment, the usual way to set DFT thread counts
+    {
+        ExternalPotential p("OMP_NUM_THREADS=1 " + lj_command(), {"Ar"}, with("envassign"));
+        CHECK(evaluate(s, p).forces.size() == s.size(), "OMP_NUM_THREADS=1 worker");
+    }
     // Commands with shell operators run without the "exec" prefix (a leading builtin works).
     {
         ExternalPotential p("cd '" + std::string(ATOMFORGE_SOURCE_DIR) + "/quantum' && python3 worker.py lj", {"Ar"}, with("cd"));
@@ -406,15 +502,17 @@ static double field(const std::string& out, const char* key) {
     const auto k = out.find(key);
     return k == std::string::npos ? std::nan("") : std::atof(out.c_str() + k + std::strlen(key));
 }
-static void test_external_cli() {
-    std::puts("[external_cli] atomforge relax --potential external:\"python3 quantum/worker.py lj\" matches --potential lj");
+static void test_external_cli_args() {
+    std::puts("[external_cli_args] relax --potential argument and failure exit codes (no python3 needed)");
     if (g_cli.empty()) { std::puts("  SKIP: no atomforge path given"); g_skip = true; return; }
-    std::string a, b, c;
+    std::string c;
     const std::string cli = "/usr/bin/timeout 60s '" + g_cli + "'";
     const std::string base = cli + " relax A1 Ar --volume 40 --no-elastic";
     // Exit codes without python3: 1 for usage / argument errors, 2 for failures while running.
     int sc = run(base + " --potential bogus", c);
-    CHECK(sc == 2 && c.find("unknown --potential") != std::string::npos, "bogus spec: status %d", sc);
+    CHECK(sc == 1 && c.find("unknown --potential") != std::string::npos, "bogus spec (a bad value): status %d", sc);
+    sc = run(base + " --potential lj:1,2", c);
+    CHECK(sc == 1 && c.find("lj:EPS,SIGMA,RC") != std::string::npos, "malformed lj spec: status %d", sc);
     sc = run(cli + " relax A1 Ar --potential lj", c);
     CHECK(sc == 2 && c.find("--volume") != std::string::npos, "element without a reference volume: status %d", sc);
     sc = run(cli + " relax L1_2 Cu Xx", c);
@@ -425,7 +523,15 @@ static void test_external_cli() {
     CHECK(sc == 1 && c.find("--fmax expects") != std::string::npos, "bad option value: status %d", sc);
     sc = run(base + " --potential external:true --worker-log /nonexistent-atomforge-dir/w.log", c);
     CHECK(sc == 2 && c.find("cannot open worker log") != std::string::npos, "unusable --worker-log: status %d '%s'", sc, c.c_str());
+}
+
+static void test_external_cli() {
+    std::puts("[external_cli] atomforge relax --potential external:\"python3 quantum/worker.py lj\" matches --potential lj");
+    if (g_cli.empty()) { std::puts("  SKIP: no atomforge path given"); g_skip = true; return; }
+    std::string a, b, c;
+    const std::string base = "/usr/bin/timeout 60s '" + g_cli + "' relax A1 Ar --volume 40 --no-elastic";
     if (!have_python()) return;
+    int sc = 0;
 
     const int sa = run(base + " --potential lj", a);
     const int sb = run(base + " --potential \"external:" + lj_command() + "\" --worker-log '" + log_path("cli") + "'", b);
@@ -446,7 +552,9 @@ static void test_external_cli() {
         const char* sig = k.sig;
         const std::string pf = log_path("orphan") + "." + sig + (k.shell ? ".sh" : "") + ".pid";
         std::remove(pf.c_str());
-        const std::string worker = k.shell ? "sh -c 'echo $$ > " + pf + "; exec sleep 30'" : lj_command("--fault hang --pid-file " + pf);
+        // \$\$: escaped for the popen shell's double quotes, so that the worker's own shell expands it (to the pid that
+        // then execs sleep)
+        const std::string worker = k.shell ? "sh -c 'echo \\$\\$ > " + pf + "; exec sleep 30'" : lj_command("--fault hang --pid-file " + pf);
         sc = run(std::string("/usr/bin/timeout -s ") + sig + " 2 '" + g_cli + "' relax A1 Ar --volume 40 --potential \"external:" + worker + "\"", c);
         const long wpid = read_pid(pf);
         const bool gone = wpid > 0 && wait_dead(wpid, 5);
@@ -460,7 +568,8 @@ static void test_external_cli() {
 
 int main(int argc, char** argv) {
     struct Group { const char* name; void (*fn)(); };
-    const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}, {"external_cli", test_external_cli}};
+    const Group groups[] = {{"lj", test_lj}, {"external", test_external}, {"external_relax", test_external_relax}, {"external_errors", test_external_errors}, {"external_json", test_external_json},
+                            {"external_locale", test_external_locale}, {"external_cli_args", test_external_cli_args}, {"external_cli", test_external_cli}};
     const char* want = argc > 1 ? argv[1] : nullptr;
     if (argc > 2) g_cli = argv[2];
     bool ran = false;
