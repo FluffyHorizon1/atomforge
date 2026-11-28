@@ -21,7 +21,7 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 
 Options: `-DATOMFORGE_NATIVE=ON` adds `-march=native` (off by default, so binaries are portable);
 `-DATOMFORGE_BUILD_TESTS=OFF` skips the `tests/` suite (the CLI `validate` CTest entry is always registered). Tests run with `ctest --test-dir build --output-on-failure`
-(57 s for all 26 entries on the 4-core cloud box used for this README, 13 s for `ctest -LE slow`; see [Testing](#testing)).
+(71 s for all 26 entries run one at a time on the 4-core cloud box used for this README, 24 s for `ctest -LE slow`; see [Testing](#testing)).
 
 Every candidate is written as **POSCAR** (VASP / Quantum ESPRESSO via ASE) and **extended XYZ** (OVITO, ASE).
 Hull structures can go straight to DFT for verification.
