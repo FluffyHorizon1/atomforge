@@ -1,0 +1,15 @@
+$ python3 quantum/check_pyscf_fd.py   (PySCF 2.15.1, 2 cores)
+[worker] started pyscf(PBE/gth-szv/gth-pbe,k=2,2,2,sigma=0.01Ha)
+{'protocol': 1, 'name': 'pyscf(PBE/gth-szv/gth-pbe,k=2,2,2,sigma=0.01Ha)', 'cutoff': 0.0, 'masses': [26.9815385]}
+[worker] E = -2.07587970 Ha  F = -2.07630646 Ha  max|g| = 2.112e-15
+E0 = -56.499177 eV  stress diag [-0.01276834579793294, -0.012768345821634318, -0.012768345793956032]  t=26.2s
+[worker] E = -2.07589656 Ha  F = -2.07634601 Ha  max|g| = 1.210e-15
+[worker] E = -2.07584728 Ha  F = -2.07625241 Ha  max|g| = 1.333e-15
+trace W: FD -0.63673 eV, analytic -0.63615 eV
+[worker] E = -8.03993512 Ha  F = -8.06111662 Ha  max|g| = 2.765e-03
+[worker] E = -8.03993052 Ha  F = -8.06111224 Ha  max|g| = 2.821e-03
+[worker] E = -8.03993959 Ha  F = -8.06112090 Ha  max|g| = 2.710e-03
+4-atom fcc, atom 3 displaced 0.05 A: F_y FD -0.11777, analytic -0.11778 eV/A  (t=130.9s)
+real	7m38.912s
+user	14m38.213s
+sys	0m17.668s

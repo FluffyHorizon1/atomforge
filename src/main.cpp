@@ -3,13 +3,16 @@
 //   atomforge validate
 //   atomforge search <A> <B> [--out DIR] [--T 600] [--md-steps 3000] [--mc-sweeps 400] [--quick] [--materials]
 //     --materials also writes <out>/materials-contract-<A><B>.json (forge.materials.v0 sidecar; see include/atomforge/materials.hpp)
-//   atomforge relax <prototype> <A> [B]        e.g. atomforge relax L1_2 Cu Au
+//   atomforge relax <prototype> <A> [B] [--potential eam|lj[:eps,sigma,rc]|external:CMD] ...   e.g. atomforge relax L1_2 Cu Au
 #include "atomforge/atomforge.hpp"
+#include "atomforge/external.hpp"
+#include "atomforge/lj.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 
 using namespace atomforge;
 namespace fs = std::filesystem;
@@ -18,7 +21,10 @@ static void usage() {
     std::puts("atomforge — atomistic alloy structure search\n"
               "  atomforge elements\n"
               "  atomforge validate\n"
-              "  atomforge relax <prototype> <A> [B]     prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
+              "  atomforge relax <prototype> <A> [B] [--potential eam|lj[:eps,sigma,rc]|external:CMD] [--volume V]\n"
+              "                 [--cell full|hydrostatic|fixed] [--fmax F] [--elastic|--no-elastic] [--worker-timeout S]\n"
+              "                 [--worker-hello-timeout S] [--worker-log PATH]\n"
+              "                                          prototypes: A1 A2 A3 L1_2 L1_0 L1_1 B2 D0_3 C15 B1\n"
               "  atomforge search <A> <B> [--out DIR] [--T K] [--md-steps N] [--mc-sweeps N] [--quick] [--materials]");
 }
 
@@ -36,26 +42,108 @@ static int cmd_validate() {
     return S.passed() ? 0 : 1;
 }
 
+// A bad command-line value detected after option parsing (exit status 1, like other argument errors).
+struct UsageError : std::runtime_error { using std::runtime_error::runtime_error; };
+
+// --potential SPEC:  eam (default) | lj[:eps,sigma,rc] | external:<command>   (see docs/EXTERNAL_PROTOCOL.md)
+static std::unique_ptr<Potential> make_potential(const std::string& spec, const std::vector<std::string>& els, const ExternalOptions& xo) {
+    if (spec == "eam") return std::make_unique<ZhouEAM>(els);
+    if (spec == "lj" || spec.rfind("lj:", 0) == 0) {
+        LJParams p;
+        if (spec.size() > 3) {
+            double v[3];
+            char tail = 0;
+            if (std::sscanf(spec.c_str() + 3, "%lf,%lf,%lf%c", &v[0], &v[1], &v[2], &tail) != 3)
+                throw UsageError("--potential lj:EPS,SIGMA,RC expects three numbers (eV, A, A), got '" + spec + "'");
+            p.epsilon = v[0]; p.sigma = v[1]; p.rc = v[2];
+        }
+        try { return std::make_unique<LennardJones>(els, p); } catch (const std::runtime_error& e) { throw UsageError(e.what()); }
+    }
+    if (spec.rfind("external:", 0) == 0) {
+        const std::string cmd = spec.substr(9);
+        if (cmd.find_first_not_of(" \t") == std::string::npos) throw UsageError("--potential external: needs a worker command");
+        return std::make_unique<ExternalPotential>(cmd, els, xo);
+    }
+    throw UsageError("unknown --potential '" + spec + "' (expected eam, lj[:eps,sigma,rc] or external:<command>)");
+}
+
 static int cmd_relax(int argc, char** argv) {
-    if (argc < 4) { usage(); return 1; }
-    const std::string proto = argv[2], A = argv[3], B = argc > 4 ? argv[4] : argv[3];
-    ZhouEAM pot(A == B ? std::vector<std::string>{A} : std::vector<std::string>{A, B});
+    std::vector<std::string> pos;
+    std::string spec = "eam";
+    ExternalOptions xo;
+    double volume = 0, fmax = 1e-3;
+    int elastic = -1;   // -1: default (on for eam/lj, off for external, where it costs at least 24 more evaluations)
+    CellMode cell = CellMode::Full;
+    // Exit status, as for `search`: 1 for usage and argument errors (unknown option, bad value, unknown prototype, extra
+    // arguments), 2 for failures while running (unsupported element, worker failure); see main().
+    try {
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        auto val = [&]() -> std::string {
+            if (i + 1 >= argc) throw std::runtime_error(a + " requires a value");
+            return argv[++i];
+        };
+        auto num = [&](double lo) {
+            const std::string v = val();
+            char* end = nullptr;
+            const double x = std::strtod(v.c_str(), &end);
+            if (end == v.c_str() || *end != '\0' || !(x > lo)) throw std::runtime_error(a + " expects a number > " + std::to_string(lo) + ", got '" + v + "'");
+            return x;
+        };
+        if (a == "--potential") spec = val();
+        else if (a == "--volume") volume = num(0);
+        else if (a == "--fmax") fmax = num(0);
+        else if (a == "--worker-timeout") xo.eval_timeout_s = num(0);            // inf (or >= 1e9 s): no deadline
+        else if (a == "--worker-hello-timeout") xo.hello_timeout_s = num(0);
+        else if (a == "--worker-log") xo.log_path = val();
+        else if (a == "--elastic") elastic = 1;
+        else if (a == "--no-elastic") elastic = 0;
+        else if (a == "--cell") {
+            const std::string c = val();
+            if (c == "full") cell = CellMode::Full;
+            else if (c == "hydrostatic") cell = CellMode::Hydrostatic;
+            else if (c == "fixed") cell = CellMode::Fixed;
+            else throw std::runtime_error("--cell expects full, hydrostatic or fixed, got '" + c + "'");
+        } else if (!a.empty() && a[0] == '-') {
+            std::fprintf(stderr, "error: unknown option %s\n", a.c_str());
+            usage();
+            return 1;
+        } else pos.push_back(a);
+    }
+    } catch (const std::runtime_error& e) {
+        std::fprintf(stderr, "error: %s\n", e.what());
+        return 1;
+    }
+    if (pos.size() > 3) { std::fprintf(stderr, "error: unexpected argument %s\n", pos[3].c_str()); usage(); return 1; }
+    if (pos.size() < 2) { usage(); return 1; }
+    const std::string proto = pos[0], A = pos[1], B = pos.size() > 2 ? pos[2] : pos[1];
+    const std::vector<std::string> els = A == B ? std::vector<std::string>{A} : std::vector<std::string>{A, B};
     const int ib = A == B ? 0 : 1;
-    for (const auto& p : prototypes()) {
-        if (p.name.rfind(proto, 0) != 0) continue;
-        Structure s = p.build(0, ib);
-        detail::scale_to_volume(s, detail::vegard_volume(A, B, s.fraction(ib)));
-        auto r = relax(s, pot);
-        std::printf("%s %s%s: E = %.5f eV/atom, V = %.4f A^3/atom, %d steps %s\n", p.name.c_str(), A.c_str(), A == B ? "" : B.c_str(),
-                    r.energy / s.size(), r.s.volume() / s.size(), r.steps, r.converged ? "(converged)" : "(NOT converged)");
-        for (int i = 0; i < 3; ++i) std::printf("  a%d = %9.5f %9.5f %9.5f\n", i + 1, r.s.cell(i, 0), r.s.cell(i, 1), r.s.cell(i, 2));
-        auto el = elastic_tensor(r.s, pot);
+    const auto protos = prototypes();
+    const Prototype* P = nullptr;
+    for (const auto& p : protos) if (p.name.rfind(proto, 0) == 0) { P = &p; break; }
+    if (!P) { std::fprintf(stderr, "error: unknown prototype %s\n", proto.c_str()); return 1; }
+    // The potential first: for eam an unsupported element is reported by ZhouEAM itself ("no parameters for Xx").
+    const auto pot = make_potential(spec, els, xo);
+    if (volume == 0 && (!ZhouEAM::lookup(A) || !ZhouEAM::lookup(B)))
+        throw std::runtime_error("no Zhou04 reference volume for " + (ZhouEAM::lookup(A) ? B : A) + ": pass --volume (A^3/atom)");
+    Structure s = P->build(0, ib);
+    detail::scale_to_volume(s, volume > 0 ? volume : detail::vegard_volume(A, B, s.fraction(ib)));
+    const auto t0 = std::chrono::steady_clock::now();
+    auto r = relax(s, *pot, RelaxOptions{cell, fmax, 3000, 0.0, 0.15});
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    if (spec != "eam") std::printf("potential: %s\n", pot->name().c_str());
+    std::printf("%s %s%s: E = %.5f eV/atom, V = %.4f A^3/atom, %d steps %s\n", P->name.c_str(), A.c_str(), A == B ? "" : B.c_str(),
+                r.energy / s.size(), r.s.volume() / s.size(), r.steps, r.converged ? "(converged)" : "(NOT converged)");
+    for (int i = 0; i < 3; ++i) std::printf("  a%d = %9.5f %9.5f %9.5f\n", i + 1, r.s.cell(i, 0), r.s.cell(i, 1), r.s.cell(i, 2));
+    if (const auto* ext = dynamic_cast<const ExternalPotential*>(pot.get()))
+        std::printf("  %ld worker evaluations in %.1f s (worker log: %s)\n", ext->evaluations(), secs, ext->log_path().c_str());
+    if (elastic == 1 || (elastic == -1 && !dynamic_cast<const ExternalPotential*>(pot.get()))) {
+        auto el = elastic_tensor(r.s, *pot);
         std::printf("  C11=%.1f C12=%.1f C44=%.1f GPa | B=%.1f G=%.1f GPa | min eig %.1f -> %s\n", el.C[0][0], el.C[0][1], el.C[3][3],
                     el.bulk_voigt, el.shear_voigt, el.eigen[0], el.mechanically_stable ? "Born-stable" : "Born-UNSTABLE");
-        return 0;
     }
-    std::fprintf(stderr, "unknown prototype %s\n", proto.c_str());
-    return 1;
+    return 0;
 }
 
 static int cmd_search(int argc, char** argv) {
@@ -161,7 +249,8 @@ int main(int argc, char** argv) {
         if (cmd == "validate") return cmd_validate();
         if (cmd == "relax") return cmd_relax(argc, argv);
         if (cmd == "search") return cmd_search(argc, argv);
-    } catch (const std::exception& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 2; }
+    } catch (const UsageError& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 1; }
+    catch (const std::exception& e) { std::fprintf(stderr, "error: %s\n", e.what()); return 2; }
     usage();
     return 1;
 }

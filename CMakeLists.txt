@@ -86,6 +86,29 @@ if(ATOMFORGE_BUILD_TESTS)
   set_tests_properties(cli PROPERTIES LABELS "unit cli slow" TIMEOUT 600)
 endif()
 
+# ExternalPotential bridge (include/atomforge/external.hpp), the native Lennard-Jones potential and quantum/worker.py.
+# Groups that need python3 exit 77 when it is missing, which CTest reports as skipped.
+if(ATOMFORGE_BUILD_TESTS)
+  add_executable(test_external tests/test_external.cpp)
+  target_link_libraries(test_external PRIVATE atomforge)
+  target_compile_options(test_external PRIVATE -Wall -Wextra -O3)
+  target_compile_definitions(test_external PRIVATE ATOMFORGE_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  function(atomforge_add_external_group group)
+    add_test(NAME ${group} COMMAND test_external ${group})
+    set_tests_properties(${group} PROPERTIES LABELS "${ARGN}" TIMEOUT 300 SKIP_RETURN_CODE 77)
+  endfunction()
+  atomforge_add_external_group(lj              unit derivatives)
+  atomforge_add_external_group(external        unit external)
+  atomforge_add_external_group(external_relax  physics external)
+  atomforge_add_external_group(external_errors unit external)
+  add_test(NAME external_cli COMMAND test_external external_cli $<TARGET_FILE:atomforge_cli>)
+  set_tests_properties(external_cli PROPERTIES LABELS "cli external" TIMEOUT 300 SKIP_RETURN_CODE 77)
+  # Python-independent checks in their own entries, so the python3 groups above can report "skipped" without python3.
+  atomforge_add_external_group(external_json   unit external)
+  atomforge_add_external_group(external_locale unit external)
+  add_test(NAME external_cli_args COMMAND test_external external_cli_args $<TARGET_FILE:atomforge_cli>)
+  set_tests_properties(external_cli_args PROPERTIES LABELS "cli external" TIMEOUT 300 SKIP_RETURN_CODE 77)
+endif()
 # --- forge.materials.v0 sidecar tests (self-contained block).
 # Sits after the CLI validate test so it composes with ci/actions-ctest and with
 # chore/atomforge-tests-suite: if both if(ATOMFORGE_BUILD_TESTS) blocks appear,
