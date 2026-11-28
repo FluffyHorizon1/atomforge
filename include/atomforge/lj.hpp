@@ -28,13 +28,14 @@ public:
     LennardJones(std::vector<std::string> els, const LJParams& p = {}) : names_(std::move(els)), p_(p) {
         if (names_.empty()) throw std::runtime_error("LennardJones: no elements");
         const std::size_t n = names_.size();
-        auto per = [&](const std::vector<double>& v, double one, const char* what) {
-            if (v.empty()) return std::vector<double>(n, one);
+        std::vector<double> e1(n, p_.epsilon), s1(n, p_.sigma);
+        auto per = [&](const std::vector<double>& v, std::vector<double>& out, const char* what) {
+            if (v.empty()) return;
             if (v.size() != n) throw std::runtime_error(std::string("LennardJones: ") + what + " needs one value per element");
-            return v;
+            for (std::size_t i = 0; i < n; ++i) out[i] = v[i];
         };
-        const auto e1 = per(p_.epsilon_by_species, p_.epsilon, "epsilon_by_species");
-        const auto s1 = per(p_.sigma_by_species, p_.sigma, "sigma_by_species");
+        per(p_.epsilon_by_species, e1, "epsilon_by_species");
+        per(p_.sigma_by_species, s1, "sigma_by_species");
         eps_.assign(n * n, 0); sig_.assign(n * n, 0); shift_.assign(n * n, 0);
         for (std::size_t a = 0; a < n; ++a) for (std::size_t b = 0; b < n; ++b) {
             const double e = std::sqrt(e1[a] * e1[b]), sg = 0.5 * (s1[a] + s1[b]);
