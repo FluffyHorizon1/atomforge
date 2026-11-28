@@ -160,9 +160,9 @@ static int cmd_relax(int argc, char** argv) {
         const auto FC = force_constants(r.s, *pot, po);
         const auto P = phonon_check(FC, po.imag_tol_THz);
         std::printf("  phonons (%dx%dx%d supercell, %ld evaluations, %.1f s): %d commensurate q, min %.3f max %.3f THz, "
-                    "%d modes below -%.2f THz -> %s\n", P.n[0], P.n[1], P.n[2], P.evaluations,
+                    "%d modes below -%.2f THz, sum-rule violation %.1e eV/A^2 -> %s\n", P.n[0], P.n[1], P.n[2], P.evaluations,
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count(), P.nq, P.min_THz, P.max_THz,
-                    P.n_imag, P.imag_tol_THz, P.stable ? "dynamically stable" : "dynamically UNSTABLE");
+                    P.n_imag, P.imag_tol_THz, P.asr_violation, phonon_status(P).c_str());
     }
     return 0;
 }
@@ -246,6 +246,7 @@ static int cmd_search(int argc, char** argv) {
         } else if (!std::strcmp(argv[i], "--phonon-supercell")) {
             int n = 0;
             if (!parse_int("--phonon-supercell", 1, &n)) return 1;
+            if (n > 16) { std::fprintf(stderr, "error: --phonon-supercell expects an integer 1..16, got %d\n", n); return 1; }
             opt.phonons = true;
             opt.phonon_opt.n[0] = opt.phonon_opt.n[1] = opt.phonon_opt.n[2] = n;
         } else if (!std::strcmp(argv[i], "--worker-timeout")) {
@@ -298,7 +299,7 @@ static int cmd_search(int argc, char** argv) {
         if (c.phonons.computed)
             std::printf("  %-34s phonons %dx%dx%d: %d q, min %.3f max %.3f THz, %d imaginary -> %s\n", "", c.phonons.n[0], c.phonons.n[1],
                         c.phonons.n[2], c.phonons.nq, c.phonons.min_THz, c.phonons.max_THz, c.phonons.n_imag,
-                        c.phonons.stable ? "dynamically stable" : "dynamically UNSTABLE");
+                        phonon_status(c.phonons).c_str());
     }
     if (const auto* ext = dynamic_cast<const ExternalPotential*>(pot.get()))
         std::printf("\n%ld worker evaluations (worker log: %s)\n", ext->evaluations(), ext->log_path().c_str());
