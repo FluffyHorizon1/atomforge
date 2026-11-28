@@ -130,6 +130,23 @@ inline Structure mc_ordering(Structure s, const Potential& pot, int ia, int ib, 
     return best;
 }
 
+// Verdict of the stability screen for a screened candidate. With phonons: imaginary modes make it "UNSTABLE (imaginary
+// phonons)"; a check that was not assessed (too small a supercell) neither passes nor fails, and the verdict says so.
+inline std::string screen_verdict(const Candidate& c, bool phonons) {
+    const bool on_hull = c.e_hull < 1e-4;
+    const bool bound = c.ef < -1e-3;
+    const bool dyn_bad = phonons && c.phonons.n_imag > 0;
+    if (on_hull && bound && c.elastic.mechanically_stable && c.thermal.retained && !dyn_bad)
+        return phonons && c.phonons.stable ? "STABLE (on hull, mechanically + thermally + dynamically stable)"
+                                           : "STABLE (on hull, mechanically + thermally stable" + std::string(phonons ? "; phonons not assessed" : "") + ")";
+    if (bound && c.elastic.mechanically_stable && c.thermal.retained && !dyn_bad)
+        return "METASTABLE (near hull" + std::string(!phonons ? "" : (c.phonons.stable ? "; dynamically stable" : "; phonons not assessed")) + ")";
+    if (!c.elastic.mechanically_stable) return "UNSTABLE (fails Born criteria)";
+    if (!c.thermal.retained) return "UNSTABLE (transforms under MD)";
+    if (dyn_bad) return "UNSTABLE (imaginary phonons)";
+    return "NOT BOUND (Ef >= 0, phase-separates)";
+}
+
 inline SearchResult binary_search(const std::string& A, const std::string& B, const Potential& pot, const SearchOptions& opt = {}) {
     const auto& els = pot.elements();
     if (els.size() != 2 || els[0] != A || els[1] != B)
@@ -255,15 +272,7 @@ inline SearchResult binary_search(const std::string& A, const std::string& B, co
         c.elastic = elastic_tensor(c.relaxed, pot);
         c.thermal = thermal_check(c.relaxed, pot, opt.md_T, opt.md_steps);
         if (opt.phonons) c.phonons = phonon_check(c.relaxed, pot, opt.phonon_opt);
-        const bool dyn_ok = !opt.phonons || c.phonons.stable;
-        const bool on_hull = c.e_hull < 1e-4;
-        const bool bound = c.ef < -1e-3;
-        if (on_hull && bound && c.elastic.mechanically_stable && c.thermal.retained && dyn_ok) c.verdict = "STABLE (on hull, mechanically + thermally stable)";
-        else if (bound && c.elastic.mechanically_stable && c.thermal.retained && dyn_ok) c.verdict = "METASTABLE (near hull)";
-        else if (!c.elastic.mechanically_stable) c.verdict = "UNSTABLE (fails Born criteria)";
-        else if (!c.thermal.retained) c.verdict = "UNSTABLE (transforms under MD)";
-        else if (!dyn_ok) c.verdict = "UNSTABLE (imaginary phonons)";
-        else c.verdict = "NOT BOUND (Ef >= 0, phase-separates)";
+        c.verdict = screen_verdict(c, opt.phonons);
     }
     return R;
 }

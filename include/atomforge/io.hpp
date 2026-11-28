@@ -75,6 +75,8 @@ inline void write_report_json(const std::string& path, const SearchResult& R) {
                 f << ", \"phonons\": {\"supercell\": [" << P.n[0] << ", " << P.n[1] << ", " << P.n[2] << "], \"n_q\": " << P.nq
                   << ", \"min_THz\": " << P.min_THz << ", \"max_THz\": " << P.max_THz << ", \"gamma_acoustic_THz\": " << P.gamma_acoustic_THz
                   << ", \"n_imaginary\": " << P.n_imag << ", \"imag_tol_THz\": " << P.imag_tol_THz
+                  << ", \"asr_violation_eV_A2\": " << P.asr_violation << ", \"min_width_A\": " << P.min_width
+                  << ", \"assessed\": " << (P.assessed ? "true" : "false")
                   << ", \"dynamically_stable\": " << (P.stable ? "true" : "false") << ", \"evaluations\": " << P.evaluations << "}";
             }
             f << "}";

@@ -9,7 +9,10 @@
 //
 // At q-points commensurate with the supercell (q = sum_i m_i b_i / n_i) the result is exact for the given force constants,
 // whatever their range. Elsewhere (a band path) it is an interpolation that improves with the supercell size.
-// Dynamical stability: no frequency below -imag_tol_THz on the commensurate grid (and on any path the caller adds).
+// Dynamical stability: no frequency below -imag_tol_THz on the commensurate grid. The check counts as assessed only if the
+// supercell has at least two cells along every lattice vector and faces at least one potential cutoff apart: a Gamma-only
+// (1x1x1) check would always pass, because the sum rule zeroes the acoustic modes there. Imaginary modes found on any
+// grid do mean "unstable".
 //
 // Every displacement is one Potential::evaluate on the supercell, called sequentially: 6 N evaluations for N atoms in the
 // cell. That is cheap for EAM and LJ; through an ExternalPotential (DFT) it is the dominant cost.
@@ -43,6 +46,8 @@ struct ForceConstants {
     std::vector<double> mass;            // per atom of `cell`
     std::vector<double> phi;             // (3 Np) x (3 Ns), row-major
     long evaluations = 0;
+    double cutoff = 0;                   // the potential's cutoff (0 if it reports none)
+    double asr_violation = 0;            // max |sum_j Phi(i a; j b)| before the sum rule is imposed, eV/A^2 (egg-box errors)
     // pair geometry: for each (i in cell, j in super) the shortest image vectors, with weight 1/count
     std::vector<std::vector<Vec3>> images;
     std::size_t np() const { return cell.size(); }
@@ -74,10 +79,12 @@ inline ForceConstants force_constants(const Structure& cell, const Potential& po
         for (std::size_t j = 0; j < Ns; ++j) for (int b = 0; b < 3; ++b)
             FC.phi[(3 * i + a) * 3 * Ns + 3 * j + b] = -(fp[j][b] - fm[j][b]) / (2 * opt.h);
     }
-    // acoustic sum rule on the self term
+    // acoustic sum rule on the self term; the size of the correction is kept as a diagnostic
+    FC.cutoff = pot.cutoff();
     for (std::size_t i = 0; i < Np; ++i) for (int a = 0; a < 3; ++a) for (int b = 0; b < 3; ++b) {
         double s = 0;
         for (std::size_t j = 0; j < Ns; ++j) s += FC.phi[(3 * i + a) * 3 * Ns + 3 * j + b];
+        FC.asr_violation = std::max(FC.asr_violation, std::abs(s));
         FC.phi[(3 * i + a) * 3 * Ns + 3 * i + b] -= s;
     }
     // shortest supercell images of every (i, j) pair
@@ -186,12 +193,24 @@ struct PhononCheck {
     int n[3] = {0, 0, 0};
     int nq = 0;                  // commensurate q-points sampled
     double min_THz = 0, max_THz = 0;
-    double gamma_acoustic_THz = 0;   // largest |frequency| of the three lowest modes at Gamma (0 by the sum rule)
+    double gamma_acoustic_THz = 0;   // largest |frequency| of the three lowest modes at Gamma (after the sum rule: ~0)
+    double asr_violation = 0;        // eV/A^2, before the sum rule (see ForceConstants::asr_violation)
+    double min_width = 0;            // smallest face width of the supercell, A
     int n_imag = 0;              // modes below -imag_tol over all sampled q
     double imag_tol_THz = 0;
-    bool stable = false;
+    bool assessed = false;       // >= 2 cells along every lattice vector and faces >= one cutoff apart
+    bool stable = false;         // assessed and no imaginary mode
     long evaluations = 0;
 };
+
+// "dynamically stable", "dynamically UNSTABLE" (imaginary modes found, whatever the grid), or "not assessed (...)".
+inline std::string phonon_status(const PhononCheck& P) {
+    if (!P.computed) return "not computed";
+    if (P.n_imag > 0) return "dynamically UNSTABLE";
+    if (!P.assessed) return "not assessed (" + std::to_string(P.n[0]) + "x" + std::to_string(P.n[1]) + "x" + std::to_string(P.n[2]) +
+                            " supercell too small; use >= 2 per direction and faces >= one cutoff apart)";
+    return "dynamically stable";
+}
 
 inline PhononCheck phonon_check(const ForceConstants& FC, double imag_tol_THz = 0.1) {
     PhononCheck P;
@@ -206,7 +225,11 @@ inline PhononCheck phonon_check(const ForceConstants& FC, double imag_tol_THz = 
         if (norm(q) < 1e-12) for (int k = 0; k < 3 && k < int(f.size()); ++k) P.gamma_acoustic_THz = std::max(P.gamma_acoustic_THz, std::abs(f[k]));
         for (double x : f) { P.min_THz = std::min(P.min_THz, x); P.max_THz = std::max(P.max_THz, x); P.n_imag += (x < -imag_tol_THz); }
     }
-    P.stable = P.n_imag == 0;
+    P.asr_violation = FC.asr_violation;
+    const Vec3 w = face_widths(FC.super.cell);
+    P.min_width = std::min({w.x, w.y, w.z});
+    P.assessed = FC.n[0] >= 2 && FC.n[1] >= 2 && FC.n[2] >= 2 && (FC.cutoff <= 0 || P.min_width >= FC.cutoff);
+    P.stable = P.assessed && P.n_imag == 0;
     return P;
 }
 inline PhononCheck phonon_check(const Structure& s, const Potential& pot, const PhononOptions& opt = {}) {
