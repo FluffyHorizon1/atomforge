@@ -138,7 +138,10 @@ From the command line:
 
 Both LJ runs above give E = -0.07762 eV/atom and V = 36.5108 Å³/atom in 33 FIRE steps (34 worker calls). For external
 potentials the elastic tensor is off by default (`--elastic` turns it on), because it costs at least 24 more evaluations (12 strained cells, each with an internal relaxation; 24 for fcc Ar with the `lj` worker).
-`--worker-timeout S` bounds each evaluation (default 3600 s).
+`--worker-timeout S` bounds each evaluation (default 3600 s; `inf` for none). `--worker-hello-timeout S` bounds the
+start-up and handshake (default 60 s; MACE downloads its model then). The `pyscf` backend is spin-restricted, so Fe, Co and
+Ni come out non-magnetic. `relax` exits with 0 on success, 1 on usage and argument errors (unknown option or prototype, bad
+value, extra arguments), and 2 on failures while running (unsupported element, a worker that fails), as `search` does.
 
 In the tests, the bridge with the `lj` worker reproduces the native LJ energy, forces and virial to better than 1e-9 (the
 differences were exactly zero in our runs) on rattled fcc, triclinic and unwrapped cells, and FIRE through the bridge

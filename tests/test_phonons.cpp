@@ -91,7 +91,7 @@ static std::array<double, 3> lj_analytic(const LJParams& p, double a, const Vec3
 
 static void test_phonons_lj() {
     std::puts("[phonons_lj] Lennard-Jones fcc: finite displacements vs the analytic dispersion; native vs external worker");
-    const LJParams p{0.0104, 3.40, 8.5, 39.948};
+    LJParams p; p.epsilon = 0.0104; p.sigma = 3.40; p.rc = 8.5; p.mass = 39.948;
     LennardJones lj({"Ar"}, p);
     const auto r = relax(primitive_fcc(5.3), lj, RelaxOptions{CellMode::Hydrostatic, 1e-7, 3000});
     const double a = std::cbrt(4 * r.s.volume());

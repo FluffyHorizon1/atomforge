@@ -17,7 +17,10 @@ only to exercise the error paths of the bridge.
 import argparse
 import json
 import math
+import os
 import sys
+import threading
+import time
 
 PROTOCOL = 1
 SKIP = 77  # CTest SKIP_RETURN_CODE
@@ -62,15 +65,38 @@ class LJ:
     """Truncated-and-shifted Lennard-Jones; the same formula as atomforge::LennardJones (include/atomforge/lj.hpp)."""
 
     def __init__(self, o):
-        self.eps, self.sig, self.rc, self.m = o.epsilon, o.sigma, o.rc, o.mass
-        if not (self.eps > 0 and self.sig > 0 and self.rc > self.sig):
+        # --epsilon / --sigma: one value for every species, or one per element (in handshake order), mixed by the
+        # Lorentz-Berthelot rule, eps_ab = sqrt(eps_a eps_b), sigma_ab = (sigma_a + sigma_b) / 2, as in lj.hpp.
+        self.eps1 = [float(x) for x in str(o.epsilon).split(",")]
+        self.sig1 = [float(x) for x in str(o.sigma).split(",")]
+        self.rc, self.m = o.rc, o.mass
+        if min(self.eps1) <= 0 or min(self.sig1) <= 0 or not self.rc > max(self.sig1):
             raise ValueError("lj: need epsilon > 0, sigma > 0, rc > sigma")
-        sr6 = math.pow(self.sig / self.rc, 6)
-        self.shift = 4 * self.eps * (sr6 * sr6 - sr6)
-        self.name = "lj(eps=%g,sigma=%g,rc=%g)" % (self.eps, self.sig, self.rc)
+        self.stress_reply = o.reply == "stress"
         self.cutoff = self.rc
+        self.name = "lj(eps=%s,sigma=%s,rc=%g)" % (o.epsilon, o.sigma, self.rc)
+        if len(self.eps1) == 1 and len(self.sig1) == 1:
+            self.name = "lj(eps=%g,sigma=%g,rc=%g)" % (self.eps1[0], self.sig1[0], self.rc)
+        self.setup(max(len(self.eps1), len(self.sig1)))   # redone for the real element count at the handshake
+
+    def setup(self, nel):
+        def per(v):
+            if len(v) == 1:
+                return v * nel
+            if len(v) != nel:
+                raise ValueError("lj: %d per-element values for %d elements" % (len(v), nel))
+            return v
+        e1, s1 = per(self.eps1), per(self.sig1)
+        self.E = [[math.sqrt(e1[a] * e1[b]) for b in range(nel)] for a in range(nel)]
+        self.S = [[0.5 * (s1[a] + s1[b]) for b in range(nel)] for a in range(nel)]
+        self.SH = [[0.0] * nel for _ in range(nel)]
+        for a in range(nel):
+            for b in range(nel):
+                sr6 = math.pow(self.S[a][b] / self.rc, 6)
+                self.SH[a][b] = 4 * self.E[a][b] * (sr6 * sr6 - sr6)
 
     def masses(self, elements):
+        self.setup(len(elements))
         return [self.m] * len(elements)
 
     def evaluate(self, cell, pos, species, symbols):
@@ -109,17 +135,21 @@ class LJ:
                             r2 = d0 * d0 + d1 * d1 + d2 * d2
                             if r2 >= rc2:
                                 continue
-                            sr2 = self.sig * self.sig / r2
+                            sa, sb = species[i], species[j]
+                            sig, eps = self.S[sa][sb], self.E[sa][sb]
+                            sr2 = sig * sig / r2
                             sr6 = sr2 * sr2 * sr2
                             sr12 = sr6 * sr6
-                            e += 4 * self.eps * (sr12 - sr6) - self.shift
-                            g = -24 * self.eps * (2 * sr12 - sr6) / r2  # (dV/dr)/r
+                            e += 4 * eps * (sr12 - sr6) - self.SH[sa][sb]
+                            g = -24 * eps * (2 * sr12 - sr6) / r2  # (dV/dr)/r
                             d = (d0, d1, d2)
                             for k in range(3):
                                 F[i][k] += g * d[k]
                                 F[j][k] -= g * d[k]
                                 for l in range(3):
                                     W[k][l] += g * d[k] * d[l]
+        if self.stress_reply:  # the form the pyscf and mace backends use: W / V in eV/A^3
+            return {"energy": e, "forces": F, "stress": [[w / vol for w in row] for row in W]}
         return {"energy": e, "forces": F, "virial": W}
 
 
@@ -206,12 +236,17 @@ class MACE:
 
 
 BACKENDS = {"lj": LJ, "pyscf": PySCF, "mace": MACE}
-REQUIRES = {"lj": [], "pyscf": ["numpy", "pyscf"], "mace": ["numpy", "ase", "mace"]}
+REQUIRES = {"lj": [], "pyscf": ["numpy", "pyscf", "pyscf.pbc.grad.krks_stress"], "mace": ["numpy", "ase", "mace.calculators"]}
 
 
 def check(backend):
-    import importlib.util
-    missing = [m for m in REQUIRES[backend] if importlib.util.find_spec(m) is None]
+    import importlib
+    missing = []
+    for m in REQUIRES[backend]:
+        try:
+            importlib.import_module(m)
+        except Exception:  # ImportError, or a broken install
+            missing.append(m)
     if missing:
         print("%s backend unavailable: missing %s" % (backend, ", ".join(missing)))
         return SKIP
@@ -219,17 +254,44 @@ def check(backend):
     return 0
 
 
+# The protocol channel. main() moves it off fd 1 before any backend is imported, so that library output (mace_mp prints
+# to stdout, C extensions may write to fd 1) goes to stderr, i.e. the log, and cannot corrupt the replies.
+PROTO = None
+
+
+def claim_stdout():
+    global PROTO
+    fd = os.dup(1)
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
+    PROTO = os.fdopen(fd, "w", buffering=1)
+
+
 def send(obj):
-    sys.stdout.write(json.dumps(obj) + "\n")  # json writes NaN for non-finite floats; the bridge rejects it
-    sys.stdout.flush()
+    PROTO.write(json.dumps(obj) + "\n")  # json writes NaN for non-finite floats; the bridge rejects it
+    PROTO.flush()
+
+
+def watchdog():
+    """Exit when the parent (atomforge) goes away, even in the middle of a long evaluation. Covers systems without
+    PR_SET_PDEATHSIG and commands where a shell sits between atomforge and this process."""
+    parent = os.getppid()
+
+    def run():
+        while True:
+            time.sleep(0.5)
+            if os.getppid() != parent:
+                os._exit(70)
+    threading.Thread(target=run, daemon=True).start()
 
 
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("backend", nargs="?", choices=sorted(BACKENDS))
     ap.add_argument("--check", metavar="BACKEND", choices=sorted(BACKENDS))
-    ap.add_argument("--epsilon", type=float, default=0.0104)
-    ap.add_argument("--sigma", type=float, default=3.40)
+    ap.add_argument("--epsilon", default="0.0104", help="eV; one value, or one per element separated by commas")
+    ap.add_argument("--sigma", default="3.40", help="A; one value, or one per element separated by commas")
+    ap.add_argument("--reply", choices=["virial", "stress"], default="virial", help="lj: reply with the virial or with W/V")
     ap.add_argument("--rc", type=float, default=8.5)
     ap.add_argument("--mass", type=float, default=39.948)
     ap.add_argument("--basis", default="gth-szv")
@@ -241,14 +303,24 @@ def main(argv):
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--model", default="medium")
     ap.add_argument("--device", default="cpu")
-    ap.add_argument("--fault", choices=["crash", "hang", "nan", "shape", "garbage", "badid", "error"],
+    ap.add_argument("--fault", choices=["crash", "hang", "nan", "shape", "garbage", "badid", "error", "spawn-exit", "errnull"],
                     help="testing aid: misbehave on evaluate request number --fault-after+1")
     ap.add_argument("--fault-after", type=int, default=0)
+    ap.add_argument("--noisy", action="store_true", help="testing aid: print to stdout (Python and fd 1) at start and per request")
+    ap.add_argument("--pid-file", help="testing aid: write this process's pid to the file")
     o = ap.parse_args(argv)
     if o.check:
         return check(o.check)
     if not o.backend:
         ap.error("a backend is required")
+    claim_stdout()
+    watchdog()
+    if o.pid_file:
+        with open(o.pid_file, "w") as f:
+            f.write("%d\n" % os.getpid())
+    if o.noisy:
+        print("noisy: Python print to stdout during construction")
+        os.write(1, b"noisy: raw write to fd 1 during construction\n")
 
     try:
         model = BACKENDS[o.backend](o)
@@ -258,6 +330,11 @@ def main(argv):
         if line:
             send({"protocol": PROTOCOL, "error": "%s backend unavailable: %s" % (o.backend, e)})
         return SKIP
+    except Exception as e:  # bad options
+        log("%s backend: %s" % (o.backend, e))
+        if sys.stdin.readline():
+            send({"protocol": PROTOCOL, "error": "%s backend: %s" % (o.backend, e)})
+        return 2
     log("started %s" % model.name)
 
     nevals = 0
@@ -298,9 +375,17 @@ def main(argv):
             import time
             while True:
                 time.sleep(1)
+        if o.noisy:
+            print("noisy: print during evaluate %d" % nevals)
+            os.write(1, b"noisy: raw fd 1 write during evaluate\n")
+        if fault == "spawn-exit":  # leave a child holding the socket, then die without replying
+            import subprocess
+            subprocess.Popen(["sleep", "30"], stdin=sys.stdin.fileno(), stdout=PROTO.fileno(), stderr=subprocess.DEVNULL)
+            log("fault injection: started a child and exiting with status 5")
+            os._exit(5)
         if fault == "garbage":
-            sys.stdout.write("this is not json\n")
-            sys.stdout.flush()
+            PROTO.write("this is not json\n")
+            PROTO.flush()
             continue
         try:
             out = model.evaluate(req["cell"], req["positions"], req["species"], req["symbols"])
@@ -311,6 +396,8 @@ def main(argv):
         if fault == "error":
             send({"id": rid, "error": "injected worker-side error"})
             continue
+        if fault == "errnull":
+            out["error"] = None
         if fault == "nan":
             out["energy"] = float("nan")
         if fault == "shape":
