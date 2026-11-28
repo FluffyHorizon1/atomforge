@@ -307,6 +307,7 @@ def main(argv):
     ap.add_argument("--fault", choices=["crash", "hang", "nan", "shape", "garbage", "badid", "error", "spawn-exit", "errnull"],
                     help="testing aid: misbehave on evaluate request number --fault-after+1")
     ap.add_argument("--fault-after", type=int, default=0)
+    ap.add_argument("--delay", type=float, default=0.0, help="testing aid: sleep this many seconds before each reply")
     ap.add_argument("--noisy", action="store_true", help="testing aid: print to stdout (Python and fd 1) at start and per request")
     ap.add_argument("--pid-file", help="testing aid: write this process's pid to the file")
     o = ap.parse_args(argv)
@@ -368,12 +369,13 @@ def main(argv):
         n = len(req["positions"])
         fault = o.fault if nevals == o.fault_after else None
         nevals += 1
+        if o.delay > 0:
+            time.sleep(o.delay)
         if fault == "crash":
             log("fault injection: exiting with status 3")
             return 3
         if fault == "hang":
             log("fault injection: hanging")
-            import time
             while True:
                 time.sleep(1)
         if o.noisy:

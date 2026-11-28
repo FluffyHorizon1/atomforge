@@ -15,6 +15,7 @@
 #include <cstring>
 #include <random>
 #include <string>
+#include <thread>
 #include <fcntl.h>
 #include <poll.h>
 #include <clocale>
@@ -422,6 +423,17 @@ static void test_external_errors() {
         ExternalPotential p1(lj_command(), {"Ar"}, d1), p2(lj_command(), {"Ar"}, d2);
         CHECK(p1.log_path() != p2.log_path(), "two potentials share the default log %s", p1.log_path().c_str());
     }
+    // One worker serves one request at a time: a second thread's evaluate() while the first waits is refused.
+    {
+        ExternalPotential p(lj_command("--delay 1.0"), {"Ar"}, with("concurrent"));
+        std::string first_err;
+        std::thread t([&] { try { evaluate(s, p); } catch (const std::exception& e) { first_err = e.what(); } });
+        ::usleep(300000);
+        expect_error("concurrent evaluate()", [&] { evaluate(s, p); }, "called concurrently", 2);
+        t.join();
+        CHECK(first_err.empty() && p.alive(), "the first (legitimate) request failed: %s", first_err.c_str());
+        CHECK(evaluate(s, p).forces.size() == s.size(), "worker usable after a refused concurrent call");
+    }
     // N1: the supervisor is an exec'd shell: host descriptors without FD_CLOEXEC do not leak into it or the worker, and
     // host signal handlers do not run in it.
     {
@@ -527,7 +539,12 @@ static void test_external_search() {
     std::ifstream f(path); std::stringstream ss; ss << f.rdbuf();
     const std::string js = ss.str();
     CHECK(js.find("\"potential\": \"external:lj(") != std::string::npos, "report.json does not name the external backend");
-    CHECK(js.find("\"phonons\": {\"supercell\": [1, 1, 1]") != std::string::npos && js.find("\"dynamically_stable\": ") != std::string::npos, "report.json has no screen.phonons block");
+    // Gamma-only phonons (1x1x1, to keep the Python worker cheap) are reported as not assessed, never as stable
+    CHECK(js.find("\"phonons\": {\"supercell\": [1, 1, 1]") != std::string::npos && js.find("\"assessed\": false") != std::string::npos &&
+          js.find("\"dynamically_stable\": true") == std::string::npos, "report.json screen.phonons block (1x1x1 must be not assessed)");
+    bool claims = false;
+    for (const auto& c : Re.candidates) claims = claims || (c.screened && c.verdict.find("dynamically stable") != std::string::npos);
+    CHECK(!claims, "a verdict claims dynamical stability from a Gamma-only check");
     bool parsed = true;
     try { (void)json::parse(js); } catch (const std::exception& e) { parsed = false; std::printf("  %s\n", e.what()); }
     CHECK(parsed, "report.json with phonons is not valid JSON");
@@ -630,7 +647,8 @@ static void test_external_cli() {
     std::stringstream rs; rs << rf.rdbuf();
     const std::string rep = rs.str();
     std::printf("  search: status %d, report %zu bytes\n", sc, rep.size());
-    CHECK(sc == 0 && c.find("worker evaluations") != std::string::npos && c.find("dynamically stable") != std::string::npos, "search via the worker: status %d\n%s", sc, c.c_str());
+    CHECK(sc == 0 && c.find("worker evaluations") != std::string::npos && c.find("not assessed") != std::string::npos &&
+          c.find("dynamically stable") == std::string::npos, "search via the worker (1x1x1 phonons: not assessed): status %d\n%s", sc, c.c_str());
     CHECK(rep.find("\"potential\": \"external:lj(") != std::string::npos, "report.json does not name the external backend");
     CHECK(rep.find("\"phonons\": {") != std::string::npos && rep.find("L1_2 Ar3Kr") != std::string::npos, "report.json lacks the screened L1_2 candidate with phonons");
     bool ok = true;
