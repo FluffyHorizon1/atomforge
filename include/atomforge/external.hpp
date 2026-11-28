@@ -1,6 +1,6 @@
 // atomforge — ExternalPotential: energies, forces and virials from a persistent worker process
 //
-// The worker is spawned once (through /bin/sh -c "exec <command>") and talks over its stdin/stdout, one JSON object per line.
+// The worker is spawned once (through /bin/sh -c "exec <command>"; without "exec" when the command uses shell operators or starts with a builtin) and talks over its stdin/stdout, one JSON object per line.
 // Its stderr is appended to a log file. The full protocol is documented in docs/EXTERNAL_PROTOCOL.md; in short:
 //
 //   -> {"op":"hello","protocol":1,"elements":["Al"]}
@@ -18,10 +18,12 @@
 // JSON, a wrong id, missing fields, the wrong number of atoms or vectors, or any non-finite number makes evaluate() throw
 // ExternalPotentialError. The message includes the tail of the worker's stderr log. A worker that failed is killed and is not
 // restarted: later calls throw too. A reply {"id":N,"error":"..."} also throws, but leaves the worker running (an SCF that
-// did not converge should not end a search). POSIX only (posix_spawn, socketpair, poll). Not thread-safe.
+// did not converge should not end a search). POSIX only (fork/exec, socketpair, poll). Not thread-safe.
 #pragma once
 #include "potential.hpp"
+#include <atomic>
 #include <cerrno>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -32,7 +34,6 @@
 #include <map>
 #include <memory>
 #include <poll.h>
-#include <spawn.h>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -41,8 +42,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
-
-extern char** environ;
 
 namespace atomforge {
 
@@ -141,13 +140,14 @@ private:
         else if (lit("Infinity")) { v.type = Value::Type::Number; v.num = HUGE_VAL; }
         else if (lit("-Infinity")) { v.type = Value::Type::Number; v.num = -HUGE_VAL; }
         else if (c == '-' || (c >= '0' && c <= '9')) {
-            const std::size_t start = i_;
-            while (i_ < s_.size() && std::strchr("+-.eE0123456789", s_[i_])) ++i_;
-            const std::string tok = s_.substr(start, i_ - start);
-            char* end = nullptr;
+            // std::from_chars: independent of the C locale (a "de_DE" decimal comma must not break the protocol)
+            const char* b = s_.data() + i_;
+            const char* e = s_.data() + s_.size();
             v.type = Value::Type::Number;
-            v.num = std::strtod(tok.c_str(), &end);
-            if (!end || *end != '\0') fail("bad number '" + tok + "'");
+            const auto res = std::from_chars(b, e, v.num, std::chars_format::general);
+            if (res.ec != std::errc() || res.ptr == b) fail("bad number '" + s_.substr(i_, 24) + "'");
+            i_ += std::size_t(res.ptr - b);
+            if (i_ < s_.size() && s_[i_] != '\0' && std::strchr(".eE+-0123456789", s_[i_])) fail("bad number '" + s_.substr(std::size_t(b - s_.data()), 24) + "'");
         } else fail(std::string("unexpected character '") + c + "'");
         --depth_;
         return v;
@@ -197,7 +197,12 @@ inline std::string quote(const std::string& s) {
     }
     return o + "\"";
 }
-inline std::string num(double x) { char b[32]; std::snprintf(b, sizeof b, "%.17g", x); return b; }
+// Shortest representation that round-trips (std::to_chars: locale independent).
+inline std::string num(double x) {
+    char b[64];
+    const auto res = std::to_chars(b, b + sizeof b, x);
+    return std::string(b, res.ptr);
+}
 
 } // namespace json
 
@@ -205,7 +210,8 @@ inline std::string num(double x) { char b[32]; std::snprintf(b, sizeof b, "%.17g
 struct ExternalOptions {
     double hello_timeout_s = 60;     // start-up and handshake (imports of PySCF / torch can be slow)
     double eval_timeout_s = 3600;    // one evaluate request; DFT evaluations can take minutes
-    std::string log_path;            // worker stderr; empty -> <tmp>/atomforge-worker-<pid>.log
+    std::string log_path;            // worker stderr; empty -> $TMPDIR/atomforge-worker-<pid>-<n>.log, one per instance
+                                     // (timeouts >= 1e9 s, or infinite, mean no deadline)
     std::vector<double> masses;      // per element; overrides the worker's "masses" (else Zhou04 table, else error)
 };
 
@@ -238,6 +244,11 @@ public:
         if (pid_ <= 0) throw ExternalPotentialError("external worker is not running (it failed earlier; see " + opt_.log_path + ")");
         const std::size_t N = s.size();
         if (s.species.size() != N) throw ExternalPotentialError("structure has " + std::to_string(s.species.size()) + " species for " + std::to_string(N) + " atoms");
+        for (int k = 0; k < 9; ++k)
+            if (!std::isfinite(s.cell.m[k])) throw ExternalPotentialError("cell entry is not finite; not sent to the worker");
+        for (std::size_t i = 0; i < N; ++i)
+            if (!std::isfinite(s.pos[i].x) || !std::isfinite(s.pos[i].y) || !std::isfinite(s.pos[i].z))
+                throw ExternalPotentialError("position of atom " + std::to_string(i) + " is not finite; not sent to the worker");
         const long id = next_id_++;
         std::string q;
         q.reserve(128 + 80 * N);
@@ -257,7 +268,7 @@ public:
 
         const json::Value r = request(q, opt_.eval_timeout_s, "evaluate");
         // A reported error (e.g. an SCF that did not converge) leaves the worker usable for the next structure.
-        if (const json::Value* e = r.get("error"); e && r.get("id") && r.get("id")->is_number() && r.get("id")->num == double(id))
+        if (const json::Value* e = r.get("error"); e && e->type != json::Value::Type::Null && r.get("id") && r.get("id")->is_number() && r.get("id")->num == double(id))
             throw ExternalPotentialError("worker reported an error: " + (e->is_string() ? e->str : std::string("(non-string)")));
         try {
             const json::Value* rid = r.get("id");
@@ -289,40 +300,84 @@ private:
     mutable int fd_ = -1;        // our end of the socketpair (worker stdin+stdout)
     mutable std::string rbuf_;
     mutable long next_id_ = 1;
+    long log_offset_ = 0;          // where this instance's section of the log starts
 
     static std::string default_log_path() {
+        static std::atomic<int> counter{0};
         const char* t = std::getenv("TMPDIR");
         std::string dir = (t && *t) ? t : "/tmp";
-        return dir + "/atomforge-worker-" + std::to_string(::getpid()) + ".log";
+        return dir + "/atomforge-worker-" + std::to_string(::getpid()) + "-" + std::to_string(++counter) + ".log";
+    }
+    // "exec cmd" lets the worker replace the shell (so signals and the exit status are the worker's own), but only for a plain
+    // command: with shell operators or a leading builtin ("cd dir && ...") the shell must stay.
+    static std::string shell_command(const std::string& cmd) {
+        const bool plain = cmd.find_first_of(";&|<>()`$\n") == std::string::npos;
+        const std::size_t b = cmd.find_first_not_of(" \t");
+        const std::string first = b == std::string::npos ? "" : cmd.substr(b, cmd.find_first_of(" \t", b) - b);
+        static const char* builtins[] = {"cd", "export", "set", "unset", ".", "source", "eval", "ulimit", "umask", "exec", "alias"};
+        bool builtin = false;
+        for (const char* w : builtins) builtin = builtin || first == w;
+        return plain && !builtin ? "exec " + cmd : cmd;
     }
 
     void start() {
+        // The log is opened here, so an unusable path is reported as such (not as a missing worker command).
+        const int logfd = ::open(opt_.log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        if (logfd < 0) throw ExternalPotentialError("cannot open worker log '" + opt_.log_path + "': " + std::strerror(errno));
+        const std::string head = "=== atomforge ExternalPotential (pid " + std::to_string(::getpid()) + "): " + cmd_ + "\n";
+        if (::write(logfd, head.data(), head.size()) < 0) { /* the log is best effort */ }
+        log_offset_ = long(::lseek(logfd, 0, SEEK_END));
         int sv[2];
-        if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0)
-            throw ExternalPotentialError(std::string("socketpair failed: ") + std::strerror(errno));
-        posix_spawn_file_actions_t fa;
-        posix_spawn_file_actions_init(&fa);
-        posix_spawn_file_actions_adddup2(&fa, sv[1], STDIN_FILENO);
-        posix_spawn_file_actions_adddup2(&fa, sv[1], STDOUT_FILENO);
-        posix_spawn_file_actions_addopen(&fa, STDERR_FILENO, opt_.log_path.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
-        const std::string shcmd = "exec " + cmd_;
+        if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0) {
+            const int e = errno;
+            ::close(logfd);
+            throw ExternalPotentialError(std::string("socketpair failed: ") + std::strerror(e));
+        }
+        // Everything the child needs is prepared before fork(): it only makes async-signal-safe calls.
+        const std::string shcmd = shell_command(cmd_);
         char a0[] = "sh", a1[] = "-c";
         std::vector<char> c(shcmd.begin(), shcmd.end()); c.push_back('\0');
         char* argv[] = {a0, a1, c.data(), nullptr};
-        pid_t pid = -1;
-        // Own process group, so kill_worker() also reaches anything the worker started (shell pipelines, MPI ranks).
-        posix_spawnattr_t at;
-        posix_spawnattr_init(&at);
-        posix_spawnattr_setflags(&at, POSIX_SPAWN_SETPGROUP);
-        posix_spawnattr_setpgroup(&at, 0);
-        const int rc = ::posix_spawn(&pid, "/bin/sh", &fa, &at, argv, environ);
-        posix_spawnattr_destroy(&at);
-        posix_spawn_file_actions_destroy(&fa);
-        ::close(sv[1]);
-        if (rc != 0) {
-            ::close(sv[0]);
-            throw ExternalPotentialError("cannot start worker '" + cmd_ + "': " + std::strerror(rc));
+        const pid_t parent = ::getpid();
+        const pid_t pid = ::fork();
+        if (pid < 0) {
+            const int e = errno;
+            ::close(sv[0]); ::close(sv[1]); ::close(logfd);
+            throw ExternalPotentialError(std::string("cannot start worker (fork failed): ") + std::strerror(e));
         }
+        if (pid == 0) {
+            // Supervisor (async-signal-safe calls only). It leads a new process group, starts the worker in it, and then
+            //  - when the worker ends, ends the same way (exit status, or the same signal), so atomforge sees the worker's
+            //    own status;
+            //  - when atomforge goes away (Ctrl-C, timeout, SIGHUP, SIGKILL, a crash), kills the whole group.
+            // The group lets kill_worker() reach everything the worker started (shell pipelines, MPI ranks). Being outside
+            // the terminal's group means Ctrl-C does not reach the worker directly; the parent check covers that.
+            ::setpgid(0, 0);
+            if (::getppid() != parent) ::_exit(127);
+            ::dup2(sv[1], STDIN_FILENO);
+            ::dup2(sv[1], STDOUT_FILENO);
+            ::dup2(logfd, STDERR_FILENO);
+            const pid_t w = ::fork();
+            if (w < 0) ::_exit(127);
+            if (w == 0) {
+                ::execv("/bin/sh", argv);
+                ::_exit(127);
+            }
+            // the supervisor keeps no end of the socket, so the worker's own exit closes it
+            ::close(STDIN_FILENO); ::close(STDOUT_FILENO); ::close(sv[0]); ::close(sv[1]); ::close(logfd);
+            for (;;) {
+                int st = 0;
+                if (::waitpid(w, &st, WNOHANG) == w) {
+                    if (WIFSIGNALED(st)) { ::signal(WTERMSIG(st), SIG_DFL); ::kill(::getpid(), WTERMSIG(st)); }
+                    ::_exit(WIFEXITED(st) ? WEXITSTATUS(st) : 1);
+                }
+                if (::getppid() != parent) { ::kill(0, SIGKILL); ::_exit(1); }   // atomforge is gone: the whole group
+                ::usleep(100000);
+            }
+        }
+        ::setpgid(pid, pid);   // also from the parent, so the group exists before any kill(-pgid)
+        ::close(sv[1]);
+        ::close(logfd);
         pid_ = pgid_ = pid;
         fd_ = sv[0];
         ::fcntl(fd_, F_SETFL, ::fcntl(fd_, F_GETFL) | O_NONBLOCK);
@@ -334,7 +389,7 @@ private:
         q += "]}\n";
         const json::Value r = request(q, opt_.hello_timeout_s, "hello");   // transport errors already carry the log tail
         try {
-            if (const json::Value* e = r.get("error")) throw ExternalPotentialError("worker refused the handshake: " + (e->is_string() ? e->str : std::string("?")));
+            if (const json::Value* e = r.get("error"); e && e->type != json::Value::Type::Null) throw ExternalPotentialError("worker refused the handshake: " + (e->is_string() ? e->str : std::string("?")));
             const double pv = number(r, "protocol");
             if (pv != external_protocol_version)
                 throw ExternalPotentialError("worker speaks protocol " + json::num(pv) + ", expected " + std::to_string(external_protocol_version));
@@ -363,10 +418,16 @@ private:
     // Send one line, read one line, parse it. On any transport failure the worker is killed and the error carries the log tail.
     json::Value request(const std::string& line, double timeout_s, const char* what) const {
         using clock = std::chrono::steady_clock;
-        const auto deadline = clock::now() + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout_s));
-        auto remaining_ms = [&]() {
+        // Very large (>= 1e9 s, about 32 years), infinite or NaN timeouts mean "no deadline"; converting them to a
+        // clock duration would overflow.
+        const bool no_deadline = !(timeout_s < 1e9);
+        const auto start = clock::now();
+        const auto deadline = no_deadline ? start : start + std::chrono::duration_cast<clock::duration>(std::chrono::duration<double>(timeout_s));
+        auto expired = [&]() { return !no_deadline && clock::now() >= deadline; };
+        auto remaining_ms = [&]() {   // wake at least once a second to check the child
+            if (no_deadline) return 1000;
             const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - clock::now()).count();
-            return left < 0 ? 0 : (left > 1000 ? 1000 : int(left));   // wake at least once a second to check the child
+            return left < 0 ? 0 : (left > 1000 ? 1000 : int(left));
         };
         auto die = [&](const std::string& why) {
             const std::string st = reap_status();
@@ -380,7 +441,7 @@ private:
             if (n > 0) { off += std::size_t(n); continue; }
             if (n < 0 && errno == EINTR) continue;
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                if (clock::now() >= deadline) die("timed out after " + json::num(timeout_s) + " s writing the request");
+                if (expired()) die("timed out after " + json::num(timeout_s) + " s writing the request");
                 pollfd p{fd_, POLLOUT, 0};
                 ::poll(&p, 1, remaining_ms());
                 if (worker_exited()) die("worker exited");
@@ -405,11 +466,24 @@ private:
                 }
             }
             if (rbuf_.size() > (std::size_t(256) << 20)) die("reply line longer than 256 MiB");
-            if (clock::now() >= deadline) die("timed out after " + json::num(timeout_s) + " s waiting for the reply");
+            if (expired()) die("timed out after " + json::num(timeout_s) + " s waiting for the reply");
             pollfd p{fd_, POLLIN, 0};
             const int pr = ::poll(&p, 1, remaining_ms());
             if (pr < 0 && errno != EINTR) die(std::string("poll failed (") + std::strerror(errno) + ")");
-            if (pr <= 0) continue;
+            if (pr <= 0) {
+                // No data. The socket stays open while anything the worker started still holds it, so a worker that exits
+                // is noticed here, not by end of file: drain what it wrote, then fail unless that holds a whole reply.
+                if (worker_exited()) {
+                    for (;;) {
+                        char buf[65536];
+                        const ssize_t n = ::recv(fd_, buf, sizeof buf, 0);
+                        if (n <= 0) break;
+                        rbuf_.append(buf, std::size_t(n));
+                    }
+                    if (rbuf_.find('\n') == std::string::npos) die("worker exited");
+                }
+                continue;
+            }
             char buf[65536];
             const ssize_t n = ::recv(fd_, buf, sizeof buf, 0);
             if (n > 0) { rbuf_.append(buf, std::size_t(n)); continue; }
@@ -460,6 +534,7 @@ private:
     std::string log_tail() const {
         std::ifstream f(opt_.log_path, std::ios::binary);
         if (!f) return "";
+        f.seekg(log_offset_);
         std::string all((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         if (all.empty()) return "";
         if (all.size() > 1500) all = "..." + all.substr(all.size() - 1500);
